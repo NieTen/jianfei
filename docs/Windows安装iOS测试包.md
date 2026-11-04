@@ -4,7 +4,7 @@
 
 项目已提供手动触发的 GitHub Actions 工作流，位置为 .github/workflows/ios-test-package.yml。
 
-工作流在云端 Mac 编译 iPhone 与 Watch，成功后生成 BingJian-unsigned.ipa、SHA-256 校验文件和构建日志。IPA 需要在安装时使用 Apple 账号签名。云端编译与真机安装尚待实际执行，完整客户端的编译错误也需要在首次构建时排查。
+2026 年 11 月 4 日，云端 Xcode 16.4 已成功编译 iPhone 与 Watch，并生成 0.1.0 的 BingJian-unsigned.ipa、SHA-256 校验文件和构建日志。IPA 已下载到本机 build/iOS测试包-0.1.0，完整性、arm64 架构和必要资源检查通过。安装时仍需使用 Apple 账号签名，真机运行尚待验证。[成功构建记录](https://github.com/NieTen/jianfei/actions/runs/41794042406)
 
 ## 准备 GitHub 仓库
 

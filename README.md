@@ -42,6 +42,6 @@ docker compose exec api python -m app.cli enrollment
 
 后台已执行接口回归、真实 HTTP 启动与重启测试、后台删除任务测试。万条合成记录下的日期汇总查询命中了复合索引。
 
-当前工作环境为 Windows，iOS 与 Watch 尚未经过 Xcode 编译和真机联调。Docker 配置检查已通过，容器实际启动仍需可用的 Docker Engine。真实 AI 服务、USDA 和 APNs 联调需要对应凭据。
+2026 年 11 月 4 日，iPhone 与 Watch 已通过 GitHub 云端 Xcode 16.4 的 Release 真机目标编译，并生成 0.1.0 待签名 IPA。Windows 安装流程见 docs/Windows安装iOS测试包.md。XCTest、签名安装与真机联调仍待执行。Docker 配置检查已通过，容器实际启动仍需可用的 Docker Engine。真实 AI 服务、USDA 和 APNs 联调需要对应凭据。
 
 备份默认复用哈希相同的加密附件，也可生成独立的完整加密包。每次备份执行恢复完整性校验。完整验收以测试与验收文档为准。
