@@ -56,7 +56,7 @@ jobs:
           test -f "$app_path/BingJian"
           test -f "$app_path/food_schema.json"
           test -d "$app_path/Watch/BingJianWatch.app"
-          xcrun lipo -verify_arch arm64 "$app_path/BingJian"
+          xcrun lipo "$app_path/BingJian" -verify_arch arm64
           mkdir -p build/package/Payload
           ditto "$app_path" build/package/Payload/BingJian.app
           (
