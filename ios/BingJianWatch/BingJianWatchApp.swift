@@ -26,8 +26,16 @@ struct WatchDashboard: View {
                     }
                     if let weight = model.summary["weight"] { Text("最近体重 \(weight) kg").font(.caption) }
                     if let intake = model.summary["intake"] { Text("已记录 \(intake) kcal").font(.caption) }
-                    NavigationLink("记体重", systemImage: "scalemass") { WatchQuickEntry(kind: "weight") }
-                    NavigationLink("记饮食", systemImage: "fork.knife") { WatchQuickEntry(kind: "meal") }
+                    NavigationLink {
+                        WatchQuickEntry(kind: "weight")
+                    } label: {
+                        Label("记体重", systemImage: "scalemass")
+                    }
+                    NavigationLink {
+                        WatchQuickEntry(kind: "meal")
+                    } label: {
+                        Label("记饮食", systemImage: "fork.knife")
+                    }
                     Text(model.summary["status"] ?? "打开手机查看完整记录").font(.caption2).foregroundStyle(.secondary)
                     if !model.entries.isEmpty {
                         Text("\(model.entries.count) 条等待手机确认").font(.caption)
