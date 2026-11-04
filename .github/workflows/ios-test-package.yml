@@ -1,0 +1,100 @@
+name: iOS 真机测试包
+
+# 手动启动构建，便于控制云端 Mac 的运行次数。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-test-package
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 编译 iPhone 与 Watch
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 获取源码
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: 检查构建环境
+        run: |
+          mkdir -p build
+          {
+            xcodebuild -version
+            xcodebuild -showsdks
+            git rev-parse HEAD
+          } | tee build/environment.log
+          test -f backend/app/resources/food_schema.json
+
+      - name: 编译真机应用
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios/BingJian.xcodeproj \
+            -scheme BingJian \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            -resultBundlePath build/Build.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            build 2>&1 | tee build/xcodebuild.log
+
+      - name: 生成待签名 IPA
+        run: |
+          app_path='build/DerivedData/Build/Products/Release-iphoneos/BingJian.app'
+          test -f "$app_path/BingJian"
+          test -f "$app_path/food_schema.json"
+          test -d "$app_path/Watch/BingJianWatch.app"
+          xcrun lipo -verify_arch arm64 "$app_path/BingJian"
+          mkdir -p build/package/Payload
+          ditto "$app_path" build/package/Payload/BingJian.app
+          (
+            cd build/package
+            ditto -c -k --keepParent Payload ../BingJian-unsigned.ipa
+          )
+          unzip -t build/BingJian-unsigned.ipa
+          (
+            cd build
+            shasum -a 256 BingJian-unsigned.ipa > BingJian-unsigned.ipa.sha256
+          )
+          cp docs/Windows安装iOS测试包.md build/安装说明.md
+          {
+            echo '## 已生成待签名测试包'
+            echo '下载构建产物中的 IPA，通过个人 Apple 账号签名后安装。'
+            echo '本次构建完成真机代码编译，手机安装、HealthKit 和 Watch 联调仍需验证。'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 保存待签名测试包
+        uses: actions/upload-artifact@v7
+        with:
+          name: BingJian-unsigned-${{ github.run_number }}
+          path: |
+            build/BingJian-unsigned.ipa
+            build/BingJian-unsigned.ipa.sha256
+            build/安装说明.md
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: 保存构建日志
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: BingJian-build-logs-${{ github.run_number }}
+          path: |
+            build/environment.log
+            build/xcodebuild.log
+            build/Build.xcresult
+          if-no-files-found: warn
+          retention-days: 7

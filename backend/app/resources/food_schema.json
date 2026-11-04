@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string"},
+          "estimated_weight_g": {"type": ["number", "null"]},
+          "calories_kcal": {"type": ["number", "null"]},
+          "protein_g": {"type": ["number", "null"]},
+          "carbs_g": {"type": ["number", "null"]},
+          "fat_g": {"type": ["number", "null"]},
+          "confidence": {"type": ["number", "null"]},
+          "food_state": {"type": "string", "enum": ["raw", "cooked", "mixed", "unknown"]},
+          "evidence_photo_ids": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": [
+          "name", "estimated_weight_g", "calories_kcal", "protein_g", "carbs_g",
+          "fat_g", "confidence", "food_state", "evidence_photo_ids"
+        ]
+      }
+    },
+    "uncertainty_note": {"type": "string"}
+  },
+  "required": ["items", "uncertainty_note"]
+}

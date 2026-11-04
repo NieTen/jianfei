@@ -1,0 +1,44 @@
+services:
+  api:
+    image: fatloss-api:dev
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATA_DIR: /data
+      TZ: Asia/Shanghai
+    expose:
+      - "8000"
+    volumes:
+      - app_data:/data
+      - ./secrets:/run/secrets:ro
+    mem_limit: 512m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SERVER_NAME: "${SERVER_NAME:-localhost}"
+    ports:
+      - "${LAN_BIND:-127.0.0.1}:${HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 128m
+
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:
