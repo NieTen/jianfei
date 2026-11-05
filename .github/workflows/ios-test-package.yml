@@ -121,6 +121,23 @@ jobs:
           xcrun simctl boot "$simulator_id"
           xcrun simctl bootstatus "$simulator_id" -b
 
+      - name: 编译并打包浏览器模拟器应用
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios/BingJian.xcodeproj \
+            -scheme BingJian \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -derivedDataPath build/SimulatorData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build 2>&1 | tee build/simulator-build.log
+          app_path=build/SimulatorData/Build/Products/Debug-iphonesimulator/BingJian.app
+          xcrun lipo "$app_path/BingJian" -verify_arch arm64
+          ditto -c -k --keepParent "$app_path" build/BingJian-simulator.zip
+          unzip -t build/BingJian-simulator.zip
+
       - name: 运行客户端测试与界面截图
         run: |
           set -o pipefail
@@ -146,13 +163,6 @@ jobs:
             fi
           fi
 
-      - name: 打包浏览器模拟器应用
-        run: |
-          app_path=build/SimulatorData/Build/Products/Debug-iphonesimulator/BingJian.app
-          xcrun lipo "$app_path/BingJian" -verify_arch arm64
-          ditto -c -k --keepParent "$app_path" build/BingJian-simulator.zip
-          unzip -t build/BingJian-simulator.zip
-
       - name: 保存模拟器包与页面截图
         uses: actions/upload-artifact@v7
         with:
@@ -170,6 +180,7 @@ jobs:
           name: BingJian-simulator-logs-${{ github.run_number }}
           path: |
             build/simulator-tests.log
+            build/simulator-build.log
             build/Appearance.xcresult
             build/ui-preview
           retention-days: 7

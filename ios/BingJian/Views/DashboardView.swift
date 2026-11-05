@@ -36,7 +36,7 @@ struct DashboardView: View {
                             Text("查看运动与健康数据").font(.subheadline.weight(.medium))
                             Spacer()
                             Image(systemName: "arrow.up.right").accessibilityHidden(true)
-                        }.frame(minHeight: 32)
+                        }.frame(minHeight: 44)
                     }
                 }
                 NavigationLink { CommunityView() } label: {

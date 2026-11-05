@@ -3,7 +3,7 @@ import UIKit
 
 enum Palette {
     static let teal = adaptive(light: 0x176B5A, dark: 0x8DD4BB)
-    static let sage = adaptive(light: 0x789F8E, dark: 0xA5C9B8)
+    static let sage = adaptive(light: 0x6E927F, dark: 0xA5C9B8)
     static let peach = adaptive(light: 0xA55C32, dark: 0xEDB38C)
     static let ink = adaptive(light: 0x193C33, dark: 0xE8F2EB)
     static let secondary = adaptive(light: 0x5C7067, dark: 0xB4C6BC)
