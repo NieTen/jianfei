@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-项目已提供手动触发的 GitHub Actions 工作流，位置为 .github/workflows/ios-test-package.yml。
+项目已提供自动运行、也可手动触发的 GitHub Actions 工作流，位置为 .github/workflows/ios-test-package.yml。推送到 main 或提交目标为 main 的合并请求时，客户端相关文件发生变化就会自动构建；纯文档变更会跳过。
 
 0.1.1 使用暖白与森林绿页面风格，支持深色模式和系统大字体。工作流生成两种独立产物：BingJian-unsigned.ipa 用于手机重签名安装，BingJian-simulator.zip 用于 iOS 模拟器。测试包保存在本机 build/iOS测试包-0.1.1，页面截图及校验结果见《测试与验收.md》。手机安装仍需使用 Apple 账号签名，真机运行尚待验证。
 
@@ -11,7 +11,7 @@
 1. 登录自己的 GitHub 账号。
 2. 使用私有仓库存放项目，确认该仓库已启用 Actions。
 3. 上传项目源码时包含 .github、ios，以及 backend/app/resources/food_schema.json，保留原有目录结构。
-4. 在仓库默认分支包含工作流后，进入 Actions，选择“iOS 测试包与界面验收”，点击 Run workflow。
+4. 在 Actions 中查看自动触发的“iOS 测试包与界面验收”；需要重新构建时，进入该流程，点击 Run workflow。
 5. 构建成功后，在本次运行的 Artifacts 中下载 BingJian-unsigned 开头的产物。
 6. 解压下载的文件，取出 BingJian-unsigned.ipa。
 
