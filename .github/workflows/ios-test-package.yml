@@ -1,15 +1,29 @@
 name: iOS 测试包与界面验收
 
-# 手动启动构建，便于控制云端 Mac 的运行次数。
+# 客户端相关变更自动验证，文档变更不会占用云端 Mac。
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - 'tools/generate_xcode_project.py'
+      - 'backend/app/resources/food_schema.json'
+      - '.github/workflows/ios-test-package.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - 'tools/generate_xcode_project.py'
+      - 'backend/app/resources/food_schema.json'
+      - '.github/workflows/ios-test-package.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ios-test-package
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
