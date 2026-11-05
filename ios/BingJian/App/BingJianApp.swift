@@ -39,10 +39,11 @@ struct BingJianApp: App {
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var selectedTab = "today"
     var body: some View {
         Group {
             if !model.setupCompleted { OnboardingView() }
-            else { tabs }
+            else { MainTabs(selection: $selectedTab) }
         }
         .alert("操作未完成", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("知道了", role: .cancel) { model.errorMessage = nil }
@@ -56,13 +57,20 @@ struct RootView: View {
         }
     }
 
-    private var tabs: some View {
-        TabView {
-            NavigationStack { DashboardView() }.tabItem { Label("今天", systemImage: "sun.max") }
-            NavigationStack { MealsView() }.tabItem { Label("饮食", systemImage: "fork.knife") }
-            NavigationStack { TrendsView() }.tabItem { Label("趋势", systemImage: "chart.xyaxis.line") }
-            NavigationStack { CommunityView() }.tabItem { Label("伙伴", systemImage: "person.2") }
-            NavigationStack { SettingsView() }.tabItem { Label("我的", systemImage: "person.crop.circle") }
+}
+
+struct MainTabs: View {
+    @Binding var selection: String
+    var body: some View {
+        TabView(selection: $selection) {
+            NavigationStack { DashboardView() }.tabItem { Label("今天", systemImage: "sun.max") }.tag("today")
+            NavigationStack { MealsView() }.tabItem { Label("饮食", systemImage: "fork.knife") }.tag("meals")
+            NavigationStack { TrendsView() }.tabItem { Label("趋势", systemImage: "chart.xyaxis.line") }.tag("trends")
+            NavigationStack { CommunityView() }.tabItem { Label("伙伴", systemImage: "person.2") }.tag("community")
+            NavigationStack { SettingsView() }.tabItem { Label("我的", systemImage: "person.crop.circle") }.tag("settings")
         }
+        .toolbarBackground(Palette.card, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarBackground(Palette.canvas, for: .navigationBar)
     }
 }

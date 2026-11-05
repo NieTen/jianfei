@@ -1,4 +1,4 @@
-name: iOS 真机测试包
+name: iOS 测试包与界面验收
 
 # 手动启动构建，便于控制云端 Mac 的运行次数。
 on:
@@ -85,7 +85,6 @@ jobs:
             build/安装说明.md
           if-no-files-found: error
           retention-days: 7
-          compression-level: 0
 
       - name: 保存构建日志
         if: always()
@@ -97,4 +96,80 @@ jobs:
             build/xcodebuild.log
             build/Build.xcresult
           if-no-files-found: warn
+          retention-days: 7
+
+  appearance:
+    name: 模拟器测试与页面检查
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 获取源码
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: 启动 iPhone 模拟器
+        run: |
+          mkdir -p build
+          xcodebuild -version
+          xcrun simctl list devices available -j > build/simulators.json
+          simulator_id=$(python3 -c 'import json; d=json.load(open("build/simulators.json")); phones=[v for a in d["devices"].values() for v in a if v["name"].startswith("iPhone")]; print(next((v["udid"] for v in phones if v["name"]=="iPhone 16 Pro"), phones[0]["udid"]))')
+          echo "SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
+          xcrun simctl boot "$simulator_id"
+          xcrun simctl bootstatus "$simulator_id" -b
+
+      - name: 运行客户端测试与界面截图
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios/BingJian.xcodeproj \
+            -scheme BingJian \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -derivedDataPath build/SimulatorData \
+            -resultBundlePath build/Appearance.xcresult \
+            -parallel-testing-enabled NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            test 2>&1 | tee build/simulator-tests.log
+
+      - name: 收集页面截图
+        if: always()
+        run: |
+          if [ -n "$SIMULATOR_ID" ]; then
+            app_data=$(xcrun simctl get_app_container "$SIMULATOR_ID" com.bingjian.health data 2>/dev/null || true)
+            if [ -d "$app_data/Documents/StyleReview" ]; then
+              ditto "$app_data/Documents/StyleReview" build/ui-preview
+            fi
+          fi
+
+      - name: 打包浏览器模拟器应用
+        run: |
+          app_path=build/SimulatorData/Build/Products/Debug-iphonesimulator/BingJian.app
+          xcrun lipo "$app_path/BingJian" -verify_arch arm64
+          ditto -c -k --keepParent "$app_path" build/BingJian-simulator.zip
+          unzip -t build/BingJian-simulator.zip
+
+      - name: 保存模拟器包与页面截图
+        uses: actions/upload-artifact@v7
+        with:
+          name: BingJian-simulator-${{ github.run_number }}
+          path: |
+            build/BingJian-simulator.zip
+            build/ui-preview
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: 保存模拟器验收日志
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: BingJian-simulator-logs-${{ github.run_number }}
+          path: |
+            build/simulator-tests.log
+            build/Appearance.xcresult
+            build/ui-preview
           retention-days: 7

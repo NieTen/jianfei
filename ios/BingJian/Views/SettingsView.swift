@@ -3,37 +3,57 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     var body: some View {
-        List {
-            Section {
-                HStack(spacing: 15) {
-                    Image(systemName: "person.crop.circle.fill").font(.system(size: 42)).foregroundStyle(Palette.sage)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(model.profile.displayName.isEmpty ? "我的记录" : model.profile.displayName).font(.headline)
-                        Text(model.session?.displayName ?? "本机离线身份").font(.caption).foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                PageHeading(title: "我的健康日常", subtitle: "按自己的习惯，安排每一天。")
+                Surface {
+                    HStack(spacing: 16) {
+                        Text(String((model.profile.displayName.isEmpty ? "我" : model.profile.displayName).prefix(1)))
+                            .font(.system(.title, design: .rounded, weight: .medium))
+                            .foregroundStyle(Palette.teal).frame(width: 66, height: 66)
+                            .background(Palette.soft, in: RoundedRectangle(cornerRadius: 23))
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text(model.profile.displayName.isEmpty ? "我的记录" : model.profile.displayName)
+                                .font(.title3.weight(.semibold)).foregroundStyle(Palette.ink)
+                            StatusPill(title: model.session == nil ? "本机离线记录" : "已登录",
+                                       symbol: model.session == nil ? "iphone" : "checkmark.icloud")
+                        }
+                        Spacer()
                     }
-                }.padding(.vertical, 6)
-                NavigationLink("身体档案与目标") { ProfileEditorView() }
-                NavigationLink("身体组成与围度") { MeasurementEditorView() }
-            }
-            Section("数据与服务") {
-                NavigationLink("健康权限与历史回填") { HealthSettingsView() }
-                NavigationLink("私有服务器与账号") { ConnectionSettingsView() }
-                NavigationLink("设备与登录管理") { DeviceManagementView() }
-                NavigationLink("同步状态与冲突") { SyncStatusView() }
-                NavigationLink("导出、恢复与删除") { DataManagementView() }
-            }
-            Section("偏好") {
-                NavigationLink("AI 与个性化估算") { AISettingsView() }
-                NavigationLink("提醒与通知") { ReminderSettingsView() }
-                NavigationLink("常用食物") { FavoritesManagementView() }
-            }
-            Section("隐私与说明") {
-                Text("所有主动记录先保存到手机。个人同步、伙伴共享和外部 AI 处理分别控制。")
-                Text("导出文件由你保管密码。仅本机数据可通过加密导出包恢复，卸载前请确认备份。")
-                PrivacyNote()
-                Text("并肩 0.1 · 首版").font(.caption).foregroundStyle(.secondary)
-            }
-        }.navigationTitle("我的")
+                    Divider()
+                    NavigationLink { ProfileEditorView() } label: { SettingsRow(title: "身体档案与目标", symbol: "person.text.rectangle") }
+                    NavigationLink { MeasurementEditorView() } label: { SettingsRow(title: "身体组成与围度", symbol: "figure.stand") }
+                }
+                Text("连接与数据").font(.headline).foregroundStyle(Palette.ink).padding(.horizontal, 4)
+                Surface {
+                    NavigationLink { AISettingsView() } label: {
+                        SettingsRow(title: "AI 与个性化估算", symbol: "sparkle",
+                                    detail: model.aiConfiguration.configured ? model.aiConfiguration.model : "设置接口与模型")
+                    }
+                    Divider()
+                    NavigationLink { ConnectionSettingsView() } label: {
+                        SettingsRow(title: "私有服务器与账号", symbol: "externaldrive", detail: "后台地址保存后自动使用")
+                    }
+                    NavigationLink { HealthSettingsView() } label: { SettingsRow(title: "健康权限与历史回填", symbol: "heart") }
+                    NavigationLink { SyncStatusView() } label: { SettingsRow(title: "同步状态与冲突", symbol: "arrow.triangle.2.circlepath") }
+                    NavigationLink { DeviceManagementView() } label: { SettingsRow(title: "设备与登录管理", symbol: "iphone.gen3") }
+                    NavigationLink { DataManagementView() } label: { SettingsRow(title: "导出、恢复与删除", symbol: "tray.and.arrow.down") }
+                }
+                Text("使用偏好").font(.headline).foregroundStyle(Palette.ink).padding(.horizontal, 4)
+                Surface {
+                    NavigationLink { ReminderSettingsView() } label: { SettingsRow(title: "提醒与通知", symbol: "bell") }
+                    NavigationLink { FavoritesManagementView() } label: { SettingsRow(title: "常用食物", symbol: "bookmark") }
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("记录与隐私，由你掌握", systemImage: "lock.shield").font(.subheadline.weight(.medium)).foregroundStyle(Palette.ink)
+                    Text("所有主动记录先保存到手机。个人同步、伙伴共享和外部 AI 处理分别控制。")
+                    Text("导出文件由你保管密码。仅本机数据可通过加密导出包恢复，卸载前请确认备份。")
+                    PrivacyNote()
+                    Text("并肩 · 0.1.1").font(.caption2)
+                }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 4)
+            }.padding(20).buttonStyle(.plain)
+        }.background(Palette.canvas).navigationTitle("我的").navigationBarTitleDisplayMode(.inline)
     }
 }
 

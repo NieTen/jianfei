@@ -14,23 +14,27 @@ struct CommunityView: View {
     @State private var join = false
     var body: some View {
         ScrollView {
-            VStack(spacing: 18) {
+            VStack(spacing: 22) {
+                PageHeading(title: "一起记录，彼此鼓励", subtitle: "各自努力，也为对方的小进步高兴。")
                 Surface {
                     HStack(alignment: .top, spacing: 20) {
-                        HStack(spacing: 7) {
-                            RoundedRectangle(cornerRadius: 7).fill(Palette.teal).frame(width: 15, height: 68)
-                            RoundedRectangle(cornerRadius: 7).fill(Palette.sage).frame(width: 15, height: 50)
-                        }.accessibilityHidden(true)
+                        BrandMark().padding(12).background(Palette.soft, in: RoundedRectangle(cornerRadius: 20))
                         VStack(alignment: .leading, spacing: 7) {
-                            Text("各自的目标\n一起的记录").font(.system(.title2, design: .rounded).weight(.semibold))
-                            Text("双人或最多八人的小组，按授权分享进度。").font(.subheadline).foregroundStyle(.secondary)
+                            Text("找到你的记录伙伴").font(.system(.title3, design: .rounded).weight(.semibold)).foregroundStyle(Palette.ink)
+                            Text("双人或最多八人的小组，按授权分享进度。").font(.subheadline).foregroundStyle(Palette.secondary)
                         }
                     }
-                    HStack {
-                        Button("创建挑战") { create = true }.buttonStyle(.borderedProminent)
-                        Button("加入挑战") { join = true }.buttonStyle(.bordered)
+                    Button("创建挑战") { create = true }.buttonStyle(FilledActionStyle()).disabled(model.session == nil)
+                    Button { join = true } label: {
+                        Label("已有邀请码，加入挑战", systemImage: "ticket").font(.subheadline.weight(.medium))
+                            .frame(maxWidth: .infinity, minHeight: 44)
                     }.disabled(model.session == nil)
-                    if model.session == nil { HintLabel(text: "请先在“我的”连接并登录私有服务器。个人记录可继续离线使用。") }
+                    if model.session == nil {
+                        Divider()
+                        NavigationLink { ConnectionSettingsView() } label: {
+                            SettingsRow(title: "连接并登录后台", symbol: "link", detail: "登录后邀请伙伴或加入挑战")
+                        }.buttonStyle(.plain)
+                    }
                 }
                 ForEach(model.challenges.indices, id: \.self) { index in
                     let challenge = model.challenges[index]
@@ -41,8 +45,7 @@ struct CommunityView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(challenge.text("title")).font(.headline).foregroundStyle(Palette.ink)
-                                    Text("\(challenge.objects("members").count) 人 · \(challengeStatus(challenge.text("status")))")
-                                        .font(.caption).foregroundStyle(.secondary)
+                                    StatusPill(title: "\(challenge.objects("members").count) 人 · \(challengeStatus(challenge.text("status")))", symbol: "person.2")
                                 }
                                 Spacer()
                                 Image(systemName: "chevron.right").foregroundStyle(.secondary)
@@ -57,6 +60,7 @@ struct CommunityView: View {
         }
         .background(Palette.canvas)
         .navigationTitle("伙伴")
+        .navigationBarTitleDisplayMode(.inline)
         .task {
             if model.session != nil { try? await model.refreshChallenges() }
             if UserDefaults.standard.string(forKey: "pending_invite") != nil { join = true }

@@ -21,10 +21,13 @@ struct TrendsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 18) {
+            VStack(spacing: 22) {
+                PageHeading(title: "看见一点点变化", subtitle: "拉长时间，观察属于自己的节奏。")
                 Picker("趋势指标", selection: $metric) {
                     ForEach(metrics, id: \.0) { Text($0.1).tag($0.0) }
-                }.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+                }.pickerStyle(.menu).font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .padding(.horizontal, 10).background(Palette.soft, in: RoundedRectangle(cornerRadius: 15))
                 Picker("时间范围", selection: $days) {
                     Text("7天").tag(7); Text("30天").tag(30); Text("90天").tag(90); Text("1年").tag(365); Text("自定义").tag(0)
                 }.pickerStyle(.segmented)
@@ -33,7 +36,17 @@ struct TrendsView: View {
                     DatePicker("结束", selection: $customEnd, in: customStart...Date(), displayedComponents: .date)
                 }
                 Surface {
-                    Text(metrics.first { $0.0 == metric }?.1 ?? "趋势").font(.headline)
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(metrics.first { $0.0 == metric }?.1 ?? "趋势").font(.headline).foregroundStyle(Palette.ink)
+                            if let last = points.last, !loading {
+                                Text("\(last.value.concise) \(unit)")
+                                    .font(.system(.title, design: .rounded, weight: .semibold)).foregroundStyle(Palette.teal)
+                            }
+                        }
+                        Spacer()
+                        SymbolBadge(symbol: "chart.xyaxis.line")
+                    }
                     if loading {
                         ProgressView("正在计算趋势").frame(maxWidth: .infinity, minHeight: 260)
                     } else if points.isEmpty {
@@ -42,33 +55,46 @@ struct TrendsView: View {
                         Chart {
                             ForEach(points) { point in
                                 PointMark(x: .value("日期", point.date), y: .value("记录值", point.value))
-                                    .foregroundStyle(Palette.teal)
+                                    .foregroundStyle(Palette.teal).symbolSize(30)
                             }
                             if metric == "weight" && average {
                                 ForEach(trend.averages) { point in
                                     LineMark(x: .value("日期", point.date), y: .value("7日移动平均", point.value))
-                                        .foregroundStyle(Palette.sage)
+                                        .foregroundStyle(Palette.sage).lineStyle(StrokeStyle(lineWidth: 2.5))
                                 }
                             }
                         }
                         .chartYScale(domain: .automatic(includesZero: metric != "weight"))
+                        .chartXAxis {
+                            AxisMarks(values: .automatic(desiredCount: 4)) {
+                                AxisValueLabel(format: .dateTime.month().day())
+                            }
+                        }
+                        .chartYAxis {
+                            AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) {
+                                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
+                                AxisValueLabel()
+                            }
+                        }
                         .frame(height: 260)
                         .accessibilityLabel("\(points.count) 个有效日期的\(metrics.first { $0.0 == metric }?.1 ?? "")记录")
                         HStack {
                             Text("有效记录 \(points.count) 天")
                             Spacer()
                             if let last = points.last { Text("最近 \(last.value.concise) \(unit)") }
-                        }.font(.caption).foregroundStyle(.secondary)
+                        }.font(.caption).foregroundStyle(Palette.secondary)
                     }
                     if metric == "weight" {
-                        Toggle("7 日移动平均", isOn: $average)
+                        Divider()
+                        Toggle("7 日移动平均", isOn: $average).font(.subheadline)
                         HintLabel(text: "窗口至少包含 3 个有效测量日才显示均线，缺测日保持空缺。")
                     }
                 }
-                HStack {
-                    NavigationLink("体重记录") { WeightHistoryView() }.buttonStyle(.bordered)
-                    Button("记录围度与体脂") { showMeasurement = true }.buttonStyle(.borderedProminent)
-                }
+                Surface {
+                    NavigationLink { WeightHistoryView() } label: { SettingsRow(title: "体重记录", symbol: "scalemass") }
+                    Divider()
+                    Button { showMeasurement = true } label: { SettingsRow(title: "记录围度与体脂", symbol: "figure.stand") }
+                }.buttonStyle(.plain)
                 if !measurements.isEmpty {
                     Surface {
                         Text("身体组成记录").font(.headline)
@@ -88,7 +114,7 @@ struct TrendsView: View {
                 PrivacyNote()
             }.padding(20)
         }
-        .background(Palette.canvas).navigationTitle("长期趋势")
+        .background(Palette.canvas).navigationTitle("趋势").navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showMeasurement) { NavigationStack { MeasurementEditorView() } }
         .sheet(item: $editingMeasurement) { value in NavigationStack { MeasurementEditorView(existing: value) } }
         .task(id: calculationKey) { await refreshTrend() }

@@ -2,14 +2,25 @@ import SwiftUI
 
 struct MealsView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var newMeal = false
     @State private var editing: AppRecord?
     var body: some View {
         ScrollView {
-            VStack(spacing: 18) {
+            VStack(spacing: 22) {
+                PageHeading(title: "好好吃，也好好记", subtitle: "从每一餐，了解自己的饮食节奏。")
                 DateStrip()
+                Button { newMeal = true } label: {
+                    Label("记录这一餐", systemImage: "plus")
+                }.buttonStyle(FilledActionStyle())
                 Surface {
                     HStack {
+                        Label("营养记录", systemImage: "leaf").font(.headline).foregroundStyle(Palette.ink)
+                        Spacer()
+                        StatusPill(title: model.summary.complete ? "已确认" : "记录中",
+                                   symbol: model.summary.complete ? "checkmark" : "pencil")
+                    }
+                    nutrientLayout {
                         MetricView(title: "蛋白质", value: model.summary.protein, unit: "g")
                         MetricView(title: "碳水", value: model.summary.carbs, unit: "g")
                         MetricView(title: "脂肪", value: model.summary.fat, unit: "g")
@@ -22,15 +33,23 @@ struct MealsView: View {
                     if let meal = record.decode(MealEntry.self) {
                         Button { editing = record } label: {
                             Surface {
-                                HStack {
+                                HStack(alignment: .top, spacing: 12) {
+                                    SymbolBadge(symbol: mealSymbol(meal.mealType))
                                     VStack(alignment: .leading, spacing: 5) {
-                                        Text(MealTypes.name(meal.mealType)).font(.headline).foregroundStyle(Palette.ink)
+                                        HStack {
+                                            Text(MealTypes.name(meal.mealType)).font(.headline).foregroundStyle(Palette.ink)
+                                            Spacer()
+                                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(Palette.secondary)
+                                        }
                                         Text(meal.status == "skipped" ? "本餐未进食" : meal.items.map(\.name).joined(separator: "、"))
-                                            .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                                            .font(.subheadline).foregroundStyle(Palette.secondary).lineLimit(2)
+                                        if meal.status == "draft" {
+                                            Text("待确认").font(.caption.weight(.medium)).foregroundStyle(Palette.peach)
+                                        } else {
+                                            Text(meal.kcal.map { "\(model.profile.energyUnit == "kJ" ? ($0 * 4.184).concise : $0.concise) \(model.profile.energyUnit)" } ?? "热量待补充")
+                                                .font(.subheadline.weight(.semibold)).foregroundStyle(Palette.teal)
+                                        }
                                     }
-                                    Spacer()
-                                    if meal.status == "draft" { Text("待确认").font(.caption).foregroundStyle(Palette.peach) }
-                                    else { Text(meal.kcal.map { "\($0.concise) kcal" } ?? "热量待补充").font(.subheadline).foregroundStyle(Palette.ink) }
                                 }
                                 if !meal.photoIds.isEmpty {
                                     ScrollView(.horizontal, showsIndicators: false) {
@@ -50,25 +69,40 @@ struct MealsView: View {
                 }
                 if !model.summary.missingMeals.isEmpty {
                     Surface {
-                        Text("这些餐次还未记录").font(.headline)
+                        Label("待补充的餐次", systemImage: "clock").font(.headline).foregroundStyle(Palette.ink)
                         ForEach(model.summary.missingMeals, id: \.self) { type in
                             HStack {
-                                Text(MealTypes.name(type))
+                                Text(MealTypes.name(type)).font(.subheadline).foregroundStyle(Palette.ink)
                                 Spacer()
-                                Button("本餐未进食") { model.perform { try await model.skipMeal(type) } }.font(.subheadline)
-                            }
+                                Button("本餐未进食") { model.perform { try await model.skipMeal(type) } }
+                                    .font(.subheadline).frame(minHeight: 44)
+                            }.padding(.horizontal, 12).background(Palette.canvas, in: RoundedRectangle(cornerRadius: 14))
                         }
                     }
                 }
-                Button(model.summary.complete ? "撤回今日完成确认" : "确认今日记录完成") {
+                Button(model.summary.complete ? "撤回当日完成确认" : "确认当日记录完成") {
                     model.perform { try await model.markComplete(!model.summary.complete) }
-                }.buttonStyle(.borderedProminent).frame(maxWidth: .infinity)
+                }.buttonStyle(FilledActionStyle())
             }.padding(20)
         }
         .background(Palette.canvas)
         .navigationTitle("饮食")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar { Button("记录", systemImage: "plus") { newMeal = true } }
         .sheet(isPresented: $newMeal) { NavigationStack { MealEditorView() } }
         .sheet(item: $editing) { record in NavigationStack { MealEditorView(existing: record) } }
+    }
+
+    private var nutrientLayout: AnyLayout {
+        typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+    }
+
+    private func mealSymbol(_ type: String) -> String {
+        switch type {
+        case "breakfast": return "sun.horizon"
+        case "lunch": return "sun.max"
+        case "dinner": return "moon"
+        default: return "cup.and.saucer"
+        }
     }
 }
