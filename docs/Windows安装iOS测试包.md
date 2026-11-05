@@ -4,14 +4,14 @@
 
 项目已提供手动触发的 GitHub Actions 工作流，位置为 .github/workflows/ios-test-package.yml。
 
-2026 年 11 月 4 日，云端 Xcode 16.4 已成功编译 iPhone 与 Watch，并生成 0.1.0 的 BingJian-unsigned.ipa、SHA-256 校验文件和构建日志。IPA 已下载到本机 build/iOS测试包-0.1.0，完整性、arm64 架构和必要资源检查通过。安装时仍需使用 Apple 账号签名，真机运行尚待验证。[成功构建记录](https://github.com/NieTen/jianfei/actions/runs/41794042406)
+0.1.1 使用暖白与森林绿页面风格，支持深色模式和系统大字体。工作流生成两种独立产物：BingJian-unsigned.ipa 用于手机重签名安装，BingJian-simulator.zip 用于 iOS 模拟器。测试包保存在本机 build/iOS测试包-0.1.1，页面截图及校验结果见《测试与验收.md》。手机安装仍需使用 Apple 账号签名，真机运行尚待验证。
 
 ## 准备 GitHub 仓库
 
 1. 登录自己的 GitHub 账号。
 2. 使用私有仓库存放项目，确认该仓库已启用 Actions。
 3. 上传项目源码时包含 .github、ios，以及 backend/app/resources/food_schema.json，保留原有目录结构。
-4. 在仓库默认分支包含工作流后，进入 Actions，选择“iOS 真机测试包”，点击 Run workflow。
+4. 在仓库默认分支包含工作流后，进入 Actions，选择“iOS 测试包与界面验收”，点击 Run workflow。
 5. 构建成功后，在本次运行的 Artifacts 中下载 BingJian-unsigned 开头的产物。
 6. 解压下载的文件，取出 BingJian-unsigned.ipa。
 
@@ -20,6 +20,17 @@
 工作流使用 GitHub 托管的 macOS 运行器。私有仓库会消耗账号的 Actions 配额，超过可用额度时按账号账单设置处理。运行前查看 GitHub 的 Billing and licensing 页面。[GitHub 托管运行器说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) [GitHub Actions 计费说明](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
 
 构建失败时，下载 BingJian-build-logs 开头的产物，提供其中的 xcodebuild.log 以排查编译错误。只有编译、资源检查与 ZIP 校验全部通过，才会上传 IPA。
+
+## 在 Windows 浏览器先体验
+
+1. 在成功运行的 Artifacts 中下载 BingJian-simulator 开头的产物，解压一次。
+2. 找到其中的 BingJian-simulator.zip；它包含 ARM64 的模拟器应用，与手机 IPA 分开构建。
+3. 若选择使用 Appetize，登录自己的账号并上传 BingJian-simulator.zip，在浏览器启动 iOS 模拟器。无需连接手机或开启手机开发者模式。
+4. 可先选择“先离线记录，稍后配置”，检查饮食、体重、趋势和设置页。需要测试同步或 AI 时，再配置可从云端访问的后台或接口。
+
+Appetize 要求压缩的 iOS 模拟器 .app，不能上传真机 IPA。本项目的模拟器包在运行测试前生成，不携带 XCTest 测试组件或截图用示例记录。云端模拟器无法直接访问你电脑的 localhost 或普通家庭内网地址，HealthKit、手机相机、推送与 Watch 配对仍需实际设备验收。[Appetize 官方格式说明](https://docs.appetize.io/platform/app-management/uploading-apps/ios)
+
+本次只生成和检查模拟器包，尚未上传第三方模拟平台。工作流附带的 ui-preview 目录包含实际模拟器页面截图，其中数据为测试示例。
 
 ## 在 Windows 签名与安装
 
