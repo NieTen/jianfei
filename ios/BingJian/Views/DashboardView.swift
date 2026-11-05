@@ -98,9 +98,9 @@ struct DashboardView: View {
             }
             Rectangle().fill(.white.opacity(0.16)).frame(height: 1)
             VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline) {
+                adaptiveRow {
                     Text(balanceLabel).font(.subheadline)
-                    Spacer()
+                    if !typeSize.isAccessibilitySize { Spacer() }
                     Text(model.summary.deficit.map { "\(abs(displayedEnergy($0) ?? 0).concise) \(model.profile.energyUnit)" } ?? "等待记录")
                         .font(.subheadline.weight(.semibold)).monospacedDigit()
                 }

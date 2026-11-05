@@ -23,10 +23,11 @@ final class AppearanceTests: XCTestCase {
             }
             try await capture(OnboardingView(), model: model, name: "welcome-\(mode)", dark: dark)
         }
-        try await capture(MainTabs(selection: .constant("today")), model: model,
-                          name: "today-large-text", largeText: true)
-        try await capture(MainTabs(selection: .constant("settings")), model: model,
-                          name: "settings-large-text", largeText: true)
+        for tab in ["today", "meals", "trends", "settings"] {
+            try await capture(MainTabs(selection: .constant(tab)), model: model,
+                              name: "\(tab)-large-text", largeText: true)
+        }
+        try await capture(OnboardingView(), model: model, name: "welcome-large-text", largeText: true)
         try await capture(MainTabs(selection: .constant("today")), model: model,
                           name: "today-small-screen", compact: true)
     }

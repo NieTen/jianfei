@@ -181,20 +181,28 @@ struct EmptyRecordsView: View {
 
 struct DateStrip: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        HStack(spacing: 12) {
+        dateLayout {
             Button { model.selectToday() } label: {
                 Label("今天", systemImage: "sun.max").font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 12).frame(minHeight: 44)
                     .background(Palette.soft, in: Capsule())
             }.buttonStyle(.plain).foregroundStyle(Palette.teal)
                 .accessibilityHint("返回当前统计日期")
-            Spacer()
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
             DatePicker("记录日期", selection: Binding(get: { model.displayDate }, set: { model.selectedDate = $0 }),
                        in: ...Date(), displayedComponents: .date)
                 .labelsHidden().tint(Palette.teal)
                 .environment(\.timeZone, TimeZone(identifier: model.profile.timezone) ?? .current)
-        }.accessibilityElement(children: .contain)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+    }
+
+    private var dateLayout: AnyLayout {
+        typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(spacing: 12))
     }
 }
 
