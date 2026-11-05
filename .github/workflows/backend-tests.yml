@@ -42,7 +42,6 @@ jobs:
     env:
       PYTHONUNBUFFERED: '1'
       PYTHONUTF8: '1'
-      DATA_DIR: ${{ runner.temp }}/bingjian-test-data
     steps:
       - name: 获取源码
         uses: actions/checkout@v7
@@ -63,6 +62,7 @@ jobs:
       - name: 执行领域、接口与真实进程测试
         run: |
           set -o pipefail
+          export DATA_DIR="$RUNNER_TEMP/bingjian-test-data"
           python -m unittest discover -s tests -v 2>&1 | tee ../build/backend-tests.log
           {
             echo '## 后台自动测试通过'
