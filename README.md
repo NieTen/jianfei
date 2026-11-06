@@ -51,7 +51,7 @@ docker compose exec api python -m app.cli enrollment
 
 后台已在 GitHub 的 Linux 运行器上完成 Python 3.11 与 3.13 两组回归，每组 42 项全部通过，包含真实 HTTP 启动与重启、配置保留和后台删除任务。Docker 已通过 linux/amd64 镜像构建、API 与 Caddy 启动、HTTPS 和重建容器后的数据卷保留检查。万条合成记录下的日期汇总查询命中了复合索引。
 
-2026 年 11 月 5 日，0.1.1 界面版本已通过云端 Xcode 16.4 的 iPhone 与 Watch 编译，14 项 XCTest 通过。新版统一暖白、森林绿和深色模式，调整首页、饮食、趋势、伙伴、我的及首次设置页，并检查系统大字体和小屏幕排版。工作流同时生成待签名 IPA、模拟器应用包和页面截图，Windows 安装及浏览器模拟流程见 docs/Windows安装iOS测试包.md。
+2026 年 11 月 6 日，0.1.2 已通过云端 Xcode 16.4 的 iPhone 与 Watch 编译，16 项 XCTest 通过，包含实际钥匙串写入、更新和 AI 配置重新加载。此次修复网页模拟器中“安全凭据保存失败”，为模拟器包补齐应用身份与钥匙串授权，保留 0.1.1 的暖白、森林绿、深色模式及大字体适配。工作流同时生成待签名 IPA、模拟器应用包和页面截图，Windows 安装及浏览器模拟流程见 docs/Windows安装iOS测试包.md。
 
 签名安装、HealthKit 与 Watch 真机联调，以及实际设备的帧率和内存仍待验证。Docker 的 linux/arm64、多架构部署、空卷恢复及受限资源下的负载测试仍待验证。真实 AI 服务、USDA 和 APNs 联调需要对应凭据。
 

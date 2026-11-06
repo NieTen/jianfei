@@ -4,7 +4,7 @@
 
 项目已提供自动运行、也可手动触发的 GitHub Actions 工作流，位置为 .github/workflows/ios-test-package.yml。推送到 main 或提交目标为 main 的合并请求时，客户端相关文件发生变化就会自动构建；纯文档变更会跳过。
 
-0.1.1 使用暖白与森林绿页面风格，支持深色模式和系统大字体。工作流生成两种独立产物：BingJian-unsigned.ipa 用于手机重签名安装，BingJian-simulator.zip 用于 iOS 模拟器。测试包保存在本机 build/iOS测试包-0.1.1，页面截图及校验结果见《测试与验收.md》。手机安装仍需使用 Apple 账号签名，真机运行尚待验证。
+0.1.2 修复模拟器中 AI 凭据保存失败的问题，并保留暖白与森林绿页面风格、深色模式和系统大字体。工作流生成两种独立产物：BingJian-unsigned.ipa 用于手机重签名安装，BingJian-simulator.zip 用于 iOS 模拟器。测试包保存在本机 build/iOS测试包-0.1.2，网页测试包为 build/网页测试包/BingJian-0.1.2-Appetize.zip。页面截图及校验结果见《测试与验收.md》。手机安装仍需使用 Apple 账号签名，真机运行尚待验证。
 
 ## 准备 GitHub 仓库
 
@@ -31,6 +31,12 @@
 Appetize 要求压缩的 iOS 模拟器 .app，不能上传真机 IPA。本项目的模拟器包在运行测试前生成，不携带 XCTest 测试组件或截图用示例记录。云端模拟器无法直接访问你电脑的 localhost 或普通家庭内网地址，HealthKit、手机相机、推送与 Watch 配对仍需实际设备验收。[Appetize 官方格式说明](https://docs.appetize.io/platform/app-management/uploading-apps/ios)
 
 本次只生成和检查模拟器包，尚未上传第三方模拟平台。工作流附带的 ui-preview 目录包含实际模拟器页面截图，其中数据为测试示例。
+
+### 更新 AI 凭据保存修复包
+
+旧 0.1.1 模拟器包关闭了代码签名，缺少钥匙串所需的应用身份和访问组授权。它可能正常读取模型、通过连接测试，但在“保存 AI 设置”时报“安全凭据保存失败”。
+
+请将 BingJian-0.1.2-Appetize.zip 上传为新构建，在 Appetize 中选择新构建启动，再填写 AI 设置并保存。无需解压 ZIP，也无需开启手机开发者模式。0.1.2 的模拟器包使用临时签名并携带专用授权，密钥仍写入系统钥匙串。
 
 ## 在 Windows 签名与安装
 
