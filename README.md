@@ -60,7 +60,7 @@ docker compose exec api python -m app.cli enrollment
 
 后台已在 GitHub 的 Linux 运行器上完成 Python 3.11 与 3.13 两组回归，每组 42 项全部通过，包含真实 HTTP 启动与重启、配置保留和后台删除任务。Docker 已通过 linux/amd64 镜像构建、API 与 Caddy 启动、HTTPS 和重建容器后的数据卷保留检查。万条合成记录下的日期汇总查询命中了复合索引。
 
-2026 年 11 月 6 日，0.1.4 已通过云端 Xcode 16.4 的 iPhone 与 Watch 编译，27 项 XCTest 通过，包含体重单位偏好、公斤/斤换算、旧记录兼容、真实 HTTP 连接及地址重新加载、钥匙串写入和 AI 配置保留。模拟器包继续携带修复 AI 凭据保存所需的授权。工作流生成待签名 IPA、模拟器应用包和页面截图，Windows 安装及浏览器模拟流程见 docs/Windows安装iOS测试包.md。
+2026 年 11 月 6 日，0.1.5 已通过云端 Xcode 16.4 的 iPhone 与 Watch 编译，36 项 XCTest 通过，包含开户字段校验、多个错误同时展示及逐项消除、后台 422 详情、体重单位换算、真实 HTTP 连接及地址重新加载、钥匙串写入和 AI 配置保留。模拟器包继续携带修复 AI 凭据保存所需的授权。工作流生成待签名 IPA、模拟器应用包和页面截图，Windows 安装及浏览器模拟流程见 docs/Windows安装iOS测试包.md。
 
 群晖镜像已发布 AMD64、ARM64 两种架构，各通过 42 项容器回归，以及 HTTP、HTTPS、开户和重建后数据保留检查；ARM64 使用 QEMU 验证。真实群晖部署、签名安装、HealthKit 与 Watch 真机联调，以及设备帧率、内存、空卷恢复和负载测试仍待验证。真实 AI 服务、USDA 和 APNs 联调需要对应凭据。
 
