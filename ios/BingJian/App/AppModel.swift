@@ -463,7 +463,7 @@ final class AppModel: ObservableObject {
         try await saveServerAddress(serverURL)
         let response = try await api.send("health", authenticated: false)
         guard response.object?.text("status") == "ok" else { throw APIError(code: "CONNECTION_FAILED", message: "服务器尚未准备好") }
-        notice = "HTTPS 连接成功"
+        notice = (URL(string: serverURL)?.scheme?.uppercased() ?? "后台") + " 连接成功"
     }
 
     func authenticate(username: String, password: String, displayName: String, code: String, register: Bool, mergeLocal: Bool) async throws {

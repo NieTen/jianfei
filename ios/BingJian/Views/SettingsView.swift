@@ -50,7 +50,7 @@ struct SettingsView: View {
                     Text("所有主动记录先保存到手机。个人同步、伙伴共享和外部 AI 处理分别控制。")
                     Text("导出文件由你保管密码。仅本机数据可通过加密导出包恢复，卸载前请确认备份。")
                     PrivacyNote()
-                    Text("并肩 · 0.1.2").font(.caption2)
+                    Text("并肩 · 0.1.3").font(.caption2)
                 }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 4)
             }.padding(20).buttonStyle(.plain)
         }.background(Palette.canvas).navigationTitle("我的").navigationBarTitleDisplayMode(.inline)
@@ -76,14 +76,14 @@ struct ConnectionSettingsView: View {
         Form {
             Section("私有服务器") {
                 NavigationLink("核验服务身份与证书指纹") { ServerPairingView() }
-                TextField("https://服务器地址", text: $model.serverURL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                TextField("http:// 或 https://服务器地址", text: $model.serverURL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                 Button("保存后台地址") {
                     model.perform { try await model.saveServerAddress(model.serverURL); model.notice = "地址已保存，后续启动自动使用" }
                 }
-                Button("测试 HTTPS 连接") { model.perform { try await model.checkConnection() } }
+                Button("测试后台连接") { model.perform { try await model.checkConnection() } }
                 Button(discovery.searching ? "重新发现内网服务" : "发现内网服务") { discovery.start() }
                 ForEach(discovery.servers) { server in Button(server.name) { model.serverURL = server.url } }
-                Text("内网证书需要在 iPhone 中建立信任。地址变化后会重新验证服务器身份。").font(.caption).foregroundStyle(.secondary)
+                Text("支持 HTTP 和 HTTPS。HTTP 明文传输，建议仅在可信局域网使用；HTTPS 内网证书需要在 iPhone 中建立信任。").font(.caption).foregroundStyle(.secondary)
             }
             Section("个人同步") {
                 Toggle("允许个人记录同步到该服务器", isOn: $model.syncEnabled)

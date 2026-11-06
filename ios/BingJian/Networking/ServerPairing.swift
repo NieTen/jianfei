@@ -14,6 +14,9 @@ struct ServerPairing: Codable, Sendable {
             throw APIError(code: "PAIRING_INVALID", message: "配对信息版本、服务身份或证书指纹无效")
         }
         value.url = try ServerAddress.normalize(value.url).absoluteString
+        guard URL(string: value.url)?.scheme == "https" else {
+            throw APIError(code: "PAIRING_HTTPS", message: "证书指纹核验仅支持 HTTPS；HTTP 地址请在后台设置中直接保存")
+        }
         return value
     }
 
@@ -24,6 +27,9 @@ struct ServerPairing: Codable, Sendable {
 
     func verify() async throws {
         let base = try ServerAddress.normalize(url)
+        guard base.scheme == "https" else {
+            throw APIError(code: "PAIRING_HTTPS", message: "HTTP 连接不使用证书，无法核验证书指纹")
+        }
         let previous = UserDefaults.standard.string(forKey: pinKey)
         UserDefaults.standard.set(caSha256.lowercased(), forKey: pinKey)
         let session = URLSession(configuration: .ephemeral, delegate: NoRedirectDelegate(), delegateQueue: nil)

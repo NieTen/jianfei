@@ -112,8 +112,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "3";
-				"MARKETING_VERSION" = "0.1.2";
+				"CURRENT_PROJECT_VERSION" = "4";
+				"MARKETING_VERSION" = "0.1.3";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "NO";
@@ -140,8 +140,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "3";
-				"MARKETING_VERSION" = "0.1.2";
+				"CURRENT_PROJECT_VERSION" = "4";
+				"MARKETING_VERSION" = "0.1.3";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "NO";
@@ -868,8 +868,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "3";
-				"MARKETING_VERSION" = "0.1.2";
+				"CURRENT_PROJECT_VERSION" = "4";
+				"MARKETING_VERSION" = "0.1.3";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "NO";
@@ -902,8 +902,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "3";
-				"MARKETING_VERSION" = "0.1.2";
+				"CURRENT_PROJECT_VERSION" = "4";
+				"MARKETING_VERSION" = "0.1.3";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "NO";
@@ -971,12 +971,19 @@
 			"path" = "EnergyCalculatorTests.swift";
 			"sourceTree" = "<group>";
 		};
+		"FC646481F6F6F76B9619459B" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "LocalHTTPTestServer.swift";
+			"sourceTree" = "<group>";
+		};
 		"56C6A69A437094A934EA266D" = {
 			"isa" = "PBXGroup";
 			"children" = (
 				"B094D17967DD0A1A9713FC33",
 				"03152C0ED4D44B51FB2036A7",
 				"21AE99104B3FF9CDE79673BD",
+				"FC646481F6F6F76B9619459B",
 			);
 			"path" = "BingJianTests";
 			"sourceTree" = "<group>";
@@ -1000,6 +1007,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "21AE99104B3FF9CDE79673BD";
 		};
+		"CA18000A273A96EA1BEA2F0D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "FC646481F6F6F76B9619459B";
+		};
 		"76588EF24E71DF524FCD44EE" = {
 			"isa" = "PBXSourcesBuildPhase";
 			"buildActionMask" = 2147483647;
@@ -1007,6 +1018,7 @@
 				"47B1EEF2B9F201FD200AFF65",
 				"65BA35DE60485EA0021B0BED",
 				"CB79FB7F350B4AB3C0F54F00",
+				"CA18000A273A96EA1BEA2F0D",
 			);
 			"runOnlyForDeploymentPostprocessing" = 0;
 		};
@@ -1045,8 +1057,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "3";
-				"MARKETING_VERSION" = "0.1.2";
+				"CURRENT_PROJECT_VERSION" = "4";
+				"MARKETING_VERSION" = "0.1.3";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "YES";
@@ -1071,8 +1083,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "3";
-				"MARKETING_VERSION" = "0.1.2";
+				"CURRENT_PROJECT_VERSION" = "4";
+				"MARKETING_VERSION" = "0.1.3";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "YES";

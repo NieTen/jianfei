@@ -36,11 +36,13 @@ enum ServerAddress {
     static func normalize(_ input: String) throws -> URL {
         var text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.contains("://") { text = "https://" + text }
-        guard var components = URLComponents(string: text), components.scheme == "https",
-              components.host != nil, components.user == nil, components.password == nil,
+        guard var components = URLComponents(string: text),
+              let scheme = components.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = components.host, !host.isEmpty, components.user == nil, components.password == nil,
               components.query == nil, components.fragment == nil else {
-            throw APIError(code: "SERVER_URL", message: "请输入有效的 HTTPS 后台地址")
+            throw APIError(code: "SERVER_URL", message: "请输入有效的 HTTP 或 HTTPS 后台地址")
         }
+        components.scheme = scheme
         var path = components.path
         while path.hasSuffix("/") { path.removeLast() }
         if path.hasSuffix("/api/v1") { path = String(path.dropLast("/api/v1".count)) }

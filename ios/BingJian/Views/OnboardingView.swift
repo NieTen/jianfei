@@ -23,7 +23,7 @@ struct OnboardingView: View {
                                 Text("用于同步记录与伙伴共享").font(.caption).foregroundStyle(Palette.secondary)
                             }
                         }
-                        TextField("https://192.168.1.10:8443", text: $model.serverURL)
+                        TextField("http://192.168.1.10:8080", text: $model.serverURL)
                             .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                             .padding(14).background(Palette.canvas, in: RoundedRectangle(cornerRadius: 13))
                             .accessibilityLabel("后台地址")
@@ -38,7 +38,7 @@ struct OnboardingView: View {
                         if checking { ProgressView() }
                         NavigationLink("登录或创建后台账号") { ConnectionSettingsView() }.frame(minHeight: 44, alignment: .leading)
                         NavigationLink("使用部署者的配对信息") { ServerPairingView() }.frame(minHeight: 44, alignment: .leading)
-                        HintLabel(text: "地址可先保存。连接内网服务时，需要信任部署者提供的 HTTPS 证书。")
+                        HintLabel(text: "支持 HTTP 和 HTTPS，保存后自动复用。HTTP 明文传输，建议仅在可信局域网使用。")
                     }
                     Surface {
                         HStack(spacing: 12) {

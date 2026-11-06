@@ -22,6 +22,53 @@ final class ConfigurationAndValidationTests: XCTestCase {
         XCTAssertEqual(try ServerAddress.normalize("https://example.com/api/v1/").absoluteString, "https://example.com")
     }
 
+    func testBackendAddressAcceptsExplicitHTTPAndDefaultsToHTTPS() throws {
+        XCTAssertEqual(try ServerAddress.normalize(" http://192.168.50.186:18080/api/v1/ ").absoluteString,
+                       "http://192.168.50.186:18080")
+        XCTAssertEqual(try ServerAddress.normalize("HTTP://nas.local:18080/").absoluteString, "http://nas.local:18080")
+        XCTAssertEqual(try ServerAddress.normalize("nas.local:8443").absoluteString, "https://nas.local:8443")
+        XCTAssertThrowsError(try ServerAddress.normalize("ftp://nas.local"))
+        XCTAssertThrowsError(try ServerAddress.normalize("http://user:password@nas.local"))
+        XCTAssertThrowsError(try ServerAddress.normalize("http://nas.local?key=test"))
+    }
+
+    func testHTTPPairingDoesNotClaimCertificateVerification() throws {
+        let value = ServerPairing(kind: "bingjian_server", version: 1, url: "http://nas.local:18080",
+                                  instanceId: UUID().uuidString, caSha256: String(repeating: "a", count: 64))
+        XCTAssertThrowsError(try ServerPairing.parse(Codec.json(value)))
+    }
+
+    @MainActor
+    func testHTTPConnectionAndSavedAddressSurviveReload() async throws {
+        let server = try LocalHTTPTestServer()
+        defer { server.stop() }
+        let port = try await server.start()
+        let address = "http://127.0.0.1:\(port)"
+        let defaults = UserDefaults.standard
+        let previousAddress = defaults.string(forKey: "server_url")
+        let previousSession = KeychainStore.read("active_session")
+        defer {
+            defaults.set(previousAddress, forKey: "server_url")
+            if let previousSession {
+                try? KeychainStore.save(previousSession, key: "active_session")
+            } else {
+                KeychainStore.delete("active_session")
+            }
+        }
+        let model = AppModel()
+        model.serverURL = address + "/api/v1/"
+        try await model.checkConnection()
+        XCTAssertEqual(model.notice, "HTTP 连接成功")
+        XCTAssertEqual(defaults.string(forKey: "server_url"), address)
+        let reloaded = AppModel()
+        XCTAssertEqual(reloaded.serverURL, address)
+        try await reloaded.checkConnection()
+        XCTAssertEqual(reloaded.notice, "HTTP 连接成功")
+        let policy = Bundle.main.infoDictionary?["NSAppTransportSecurity"] as? [String: Any]
+        XCTAssertEqual(policy?["NSAllowsArbitraryLoads"] as? Bool, true)
+        XCTAssertNil(policy?["NSAllowsLocalNetworking"])
+    }
+
     func testAISettingsRoundTrip() throws {
         var value = AIConfiguration()
         value.model = "test-vision"
