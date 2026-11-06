@@ -56,7 +56,7 @@ struct SettingsView: View {
                     Text("所有主动记录先保存到手机。个人同步、伙伴共享和外部 AI 处理分别控制。")
                     Text("导出文件由你保管密码。仅本机数据可通过加密导出包恢复，卸载前请确认备份。")
                     PrivacyNote()
-                    Text("并肩 · 0.1.4").font(.caption2)
+                    Text("并肩 · 0.1.5").font(.caption2)
                 }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 4)
             }.padding(20).buttonStyle(.plain)
         }.background(Palette.canvas).navigationTitle("我的").navigationBarTitleDisplayMode(.inline)
@@ -76,7 +76,14 @@ struct ConnectionSettingsView: View {
     @State private var recoveryCode = ""
     @State private var savedRecovery = ""
     @State private var error: String?
+    @State private var errorTitle = "账号操作未完成"
+    @State private var accountErrors: [AccountField: String] = [:]
+    @State private var submitted = false
     @State private var busy = false
+
+    private var accountInput: AccountInput {
+        AccountInput(username: username, password: password, displayName: displayName, code: code)
+    }
 
     var body: some View {
         Form {
@@ -104,13 +111,9 @@ struct ConnectionSettingsView: View {
                 }
             } else {
                 Section("登录或开户") {
-                    Toggle("创建新账号", isOn: $registration)
-                    TextField("用户名", text: $username).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    SecureField("密码，开户至少 10 位", text: $password)
-                    if registration {
-                        TextField("称呼", text: $displayName)
-                        SecureField("部署者提供的开户凭据", text: $code)
-                    }
+                    Toggle("创建新账号", isOn: $registration).disabled(busy)
+                    AccountFieldsView(username: $username, password: $password, displayName: $displayName,
+                                      code: $code, registration: registration, errors: accountErrors).disabled(busy)
                     Toggle("将当前未绑定的离线记录关联到此账号", isOn: $mergeLocal)
                     Button(registration ? "开户并登录" : "登录") { Task { await authenticate() } }.disabled(busy)
                     if busy { ProgressView() }
@@ -127,6 +130,10 @@ struct ConnectionSettingsView: View {
         }
         .navigationTitle("服务器与账号")
         .onDisappear { discovery.stop() }
+        .onChange(of: accountInput) { previous, value in
+            if submitted { accountErrors = value.updatedErrors(from: previous, errors: accountErrors, registration: registration) }
+        }
+        .onChange(of: registration) { _, _ in submitted = false; accountErrors = [:] }
         .sheet(isPresented: $recovering) {
             NavigationStack {
                 Form {
@@ -142,27 +149,42 @@ struct ConnectionSettingsView: View {
                                 ], authenticated: false)
                                 savedRecovery = response.object?.text("recovery_code") ?? ""
                                 recovering = false
-                            } catch { self.error = error.localizedDescription }
+                            } catch { errorTitle = "重设密码未完成"; self.error = error.localizedDescription }
                         }
                     }
                 }.navigationTitle("恢复账号").toolbar { Button("关闭") { recovering = false } }
             }
         }
-        .alert("连接未完成", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+        .alert(errorTitle, isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("知道了", role: .cancel) {}
         } message: { Text(error ?? "") }
     }
 
     private func authenticate() async {
+        submitted = true
+        accountErrors = accountInput.validationErrors(registration: registration)
+        guard accountErrors.isEmpty else { return }
         busy = true
         defer { busy = false }
         do {
             try await model.authenticate(username: username, password: password, displayName: displayName,
                                          code: code, register: registration, mergeLocal: mergeLocal)
             savedRecovery = model.session?.recoveryCode ?? ""
+            submitted = false
+            accountErrors = [:]
             password = ""
             code = ""
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            if let apiError = error as? APIError {
+                for (key, message) in apiError.fieldErrors {
+                    if let field = AccountField(rawValue: key) { accountErrors[field] = message }
+                }
+            }
+            if accountErrors.isEmpty {
+                errorTitle = registration ? "开户未完成" : "登录未完成"
+                self.error = error.localizedDescription
+            }
+        }
     }
 }
 

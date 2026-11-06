@@ -215,7 +215,10 @@ struct APIError: Error, LocalizedError, Sendable {
     var code: String
     var message: String
     var retryable: Bool = false
-    var errorDescription: String? { message }
+    var fieldErrors: [String: String] = [:]
+    var errorDescription: String? {
+        ([message] + fieldErrors.keys.sorted().compactMap { fieldErrors[$0] }).joined(separator: "\n")
+    }
 }
 
 enum MealTypes {

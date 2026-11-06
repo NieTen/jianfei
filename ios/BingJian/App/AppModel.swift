@@ -493,16 +493,17 @@ final class AppModel: ObservableObject {
     }
 
     func authenticate(username: String, password: String, displayName: String, code: String, register: Bool, mergeLocal: Bool) async throws {
+        let input = try AccountInput(username: username, password: password, displayName: displayName, code: code).validated(registration: register)
         await stopBackgroundWork()
         defer { changingAccount = false }
         try await api.configure(serverURL)
-        let deviceKey = "device:" + serverURL + ":" + username.lowercased()
+        let deviceKey = "device:" + serverURL + ":" + input.username
         let accountDeviceId = UserDefaults.standard.string(forKey: deviceKey) ?? UUID().uuidString.lowercased()
         let credentials: SessionCredentials
         if register {
-            credentials = try await api.register(username: username, password: password, name: displayName, code: code, deviceId: accountDeviceId)
+            credentials = try await api.register(username: input.username, password: input.password, name: input.displayName, code: input.code, deviceId: accountDeviceId)
         } else {
-            credentials = try await api.login(username: username, password: password, deviceId: accountDeviceId, name: UIDevice.current.name)
+            credentials = try await api.login(username: input.username, password: input.password, deviceId: accountDeviceId, name: UIDevice.current.name)
         }
         deviceId = credentials.deviceId
         UserDefaults.standard.set(deviceId, forKey: deviceKey)
@@ -523,7 +524,7 @@ final class AppModel: ObservableObject {
         try await requireStore().setMetadata("bound_user", value: bindingKey)
         _ = try await api.send("identity/bind", method: "POST", body: ["local_user_id": .string(namespace)])
         session = credentials
-        UserDefaults.standard.set(username, forKey: "last_username")
+        UserDefaults.standard.set(input.username, forKey: "last_username")
         loadAIConfiguration()
         try? await synchronizeAIConfiguration()
         try await updateCapabilities(api.send("capabilities").object ?? [:])

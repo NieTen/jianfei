@@ -40,6 +40,21 @@ final class AppearanceTests: XCTestCase {
             try await capture(NavigationStack { WeightHistoryView() }, model: model, name: "weight-history-\(unit.rawValue)")
         }
         try await capture(MainTabs(selection: .constant("settings")), model: model, name: "settings-jin-large-text", largeText: true)
+        let accountExamples = [
+            ("account-short-password", AccountInput(username: "abc", password: "abc", displayName: "abc", code: "test-code")),
+            ("account-multiple-errors", AccountInput(username: "ab", password: "abc", displayName: "", code: ""))
+        ]
+        for (name, input) in accountExamples {
+            try await capture(NavigationStack {
+                Form {
+                    Section("创建新账号") {
+                        AccountFieldsView(username: .constant(input.username), password: .constant(input.password),
+                                          displayName: .constant(input.displayName), code: .constant(input.code),
+                                          registration: true, errors: input.validationErrors(registration: true))
+                    }
+                }.navigationTitle("服务器与账号")
+            }, model: model, name: name)
+        }
     }
 
     @MainActor
