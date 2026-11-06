@@ -30,6 +30,52 @@ final class ConfigurationAndValidationTests: XCTestCase {
         XCTAssertEqual(try Codec.decoder().decode(AIConfiguration.self, from: Codec.encoder().encode(value)), value)
     }
 
+    func testKeychainCreatesUpdatesAndDeletesCredentials() throws {
+        let key = "test_keychain:" + UUID().uuidString
+        defer { KeychainStore.delete(key) }
+        XCTAssertNil(KeychainStore.read(key))
+        try KeychainStore.save(Data("first-test-value".utf8), key: key)
+        XCTAssertEqual(KeychainStore.read(key), Data("first-test-value".utf8))
+        try KeychainStore.save(Data("replacement-test-value".utf8), key: key)
+        XCTAssertEqual(KeychainStore.read(key), Data("replacement-test-value".utf8))
+        KeychainStore.delete(key)
+        XCTAssertNil(KeychainStore.read(key))
+    }
+
+    @MainActor
+    func testDirectAISettingsAndKeySurviveModelReload() async throws {
+        let defaults = UserDefaults.standard
+        let previousNamespace = defaults.string(forKey: "local_namespace")
+        let namespace = "test-ai-credentials-" + UUID().uuidString.lowercased()
+        defaults.set(namespace, forKey: "local_namespace")
+        defer {
+            KeychainStore.delete("ai_key:" + namespace)
+            for prefix in ["ai_configuration:", "ai_configuration_pending:", "ai_clear_key:", "external_ai_consent:"] {
+                defaults.removeObject(forKey: prefix + namespace)
+            }
+            defaults.set(previousNamespace, forKey: "local_namespace")
+        }
+        // 使用虚构密钥调用与设置页相同的保存入口，不连接外部服务。
+        var value = AIConfiguration()
+        value.execution = "direct"
+        value.baseUrl = "https://example.com/v1/responses"
+        value.model = "test-vision"
+        let model = AppModel()
+        try await model.saveAIConfiguration(value, apiKey: "ci-not-a-real-api-key")
+        let reloaded = AppModel()
+        XCTAssertEqual(reloaded.aiConfiguration.baseUrl, "https://example.com/v1")
+        XCTAssertEqual(reloaded.aiConfiguration.model, "test-vision")
+        XCTAssertEqual(reloaded.aiConfiguration.execution, "direct")
+        XCTAssertEqual(reloaded.aiAPIKey(), "ci-not-a-real-api-key")
+        XCTAssertFalse(reloaded.aiConfigurationPending)
+
+        value.model = "test-vision-updated"
+        try await reloaded.saveAIConfiguration(value, apiKey: "")
+        XCTAssertEqual(AppModel().aiAPIKey(), "ci-not-a-real-api-key")
+        try await reloaded.saveAIConfiguration(value, apiKey: "ci-replacement-key")
+        XCTAssertEqual(AppModel().aiAPIKey(), "ci-replacement-key")
+    }
+
     func testUnknownPortionRequiresConfirmation() throws {
         var food = FoodItem(name: "待确认食物")
         food.requiresPortion = true

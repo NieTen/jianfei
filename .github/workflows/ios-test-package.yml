@@ -144,11 +144,26 @@ jobs:
             -configuration Debug \
             -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
             -derivedDataPath build/SimulatorData \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_ALLOWED=YES \
             CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             build 2>&1 | tee build/simulator-build.log
           app_path=build/SimulatorData/Build/Products/Debug-iphonesimulator/BingJian.app
           xcrun lipo "$app_path/BingJian" -verify_arch arm64
+          codesign --verify --deep --strict "$app_path"
+          codesign -d --entitlements :- "$app_path" > build/simulator-entitlements.plist 2> build/simulator-signature.log
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+          entitlements = plistlib.loads(Path("build/simulator-entitlements.plist").read_bytes())
+          expected = "SIMULATOR.com.bingjian.health"
+          assert entitlements.get("application-identifier") == expected
+          assert expected in entitlements.get("keychain-access-groups", [])
+          print("模拟器签名与钥匙串访问授权检查通过")
+          PY
           ditto -c -k --keepParent "$app_path" build/BingJian-simulator.zip
           unzip -t build/BingJian-simulator.zip
 
@@ -163,8 +178,12 @@ jobs:
             -derivedDataPath build/SimulatorData \
             -resultBundlePath build/Appearance.xcresult \
             -parallel-testing-enabled NO \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_ALLOWED=YES \
             CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             test 2>&1 | tee build/simulator-tests.log
 
       - name: 收集页面截图
@@ -195,6 +214,8 @@ jobs:
           path: |
             build/simulator-tests.log
             build/simulator-build.log
+            build/simulator-entitlements.plist
+            build/simulator-signature.log
             build/Appearance.xcresult
             build/ui-preview
           retention-days: 7

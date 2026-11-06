@@ -112,8 +112,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "2";
-				"MARKETING_VERSION" = "0.1.1";
+				"CURRENT_PROJECT_VERSION" = "3";
+				"MARKETING_VERSION" = "0.1.2";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "NO";
@@ -140,8 +140,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "2";
-				"MARKETING_VERSION" = "0.1.1";
+				"CURRENT_PROJECT_VERSION" = "3";
+				"MARKETING_VERSION" = "0.1.2";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "NO";
@@ -438,6 +438,12 @@
 			"path" = "PrivacyInfo.xcprivacy";
 			"sourceTree" = "<group>";
 		};
+		"DB3F3F550FBB8544412E36D9" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "text.plist.xml";
+			"path" = "Simulator.entitlements";
+			"sourceTree" = "<group>";
+		};
 		"FFF1EBBEDC769E1C969D8E84" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -565,6 +571,7 @@
 				"2D47FE00B0246A036C15B325",
 				"7F42BFC1A7A1CE2D90CD2BE7",
 				"3CFF6B67185560E8EB9F0B4A",
+				"DB3F3F550FBB8544412E36D9",
 				"11C899F3E12294EBE3BE8A08",
 				"8321262CDFB892356699B77D",
 			);
@@ -861,8 +868,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "2";
-				"MARKETING_VERSION" = "0.1.1";
+				"CURRENT_PROJECT_VERSION" = "3";
+				"MARKETING_VERSION" = "0.1.2";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "NO";
@@ -874,6 +881,7 @@
 				"CODE_SIGN_ENTITLEMENTS" = "BingJian/BingJian.entitlements";
 				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
 				"APNS_ENVIRONMENT" = "development";
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = "BingJian/Simulator.entitlements";
 				"OTHER_LDFLAGS" = (
 					"$(inherited)",
 					"-lsqlite3",
@@ -894,8 +902,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "2";
-				"MARKETING_VERSION" = "0.1.1";
+				"CURRENT_PROJECT_VERSION" = "3";
+				"MARKETING_VERSION" = "0.1.2";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "NO";
@@ -907,6 +915,7 @@
 				"CODE_SIGN_ENTITLEMENTS" = "BingJian/BingJian.entitlements";
 				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
 				"APNS_ENVIRONMENT" = "production";
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = "BingJian/Simulator.entitlements";
 				"OTHER_LDFLAGS" = (
 					"$(inherited)",
 					"-lsqlite3",
@@ -1036,8 +1045,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "2";
-				"MARKETING_VERSION" = "0.1.1";
+				"CURRENT_PROJECT_VERSION" = "3";
+				"MARKETING_VERSION" = "0.1.2";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "YES";
@@ -1062,8 +1071,8 @@
 				"SWIFT_VERSION" = "5.0";
 				"SWIFT_STRICT_CONCURRENCY" = "minimal";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"CURRENT_PROJECT_VERSION" = "2";
-				"MARKETING_VERSION" = "0.1.1";
+				"CURRENT_PROJECT_VERSION" = "3";
+				"MARKETING_VERSION" = "0.1.2";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
 				"CLANG_ENABLE_MODULES" = "YES";
 				"GENERATE_INFOPLIST_FILE" = "YES";

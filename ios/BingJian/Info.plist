@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.1</string>
+	<string>0.1.2</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>读取你授权的步数、消耗、体重、运动、心率和睡眠，用于个人记录与趋势分析。</string>
 	<key>NSHealthUpdateUsageDescription</key>
