@@ -9,7 +9,9 @@ services:
     environment:
       DATA_DIR: /data
       TZ: Asia/Shanghai
-      PUBLIC_URL: https://${NAS_IP:?请在 .env 填写 NAS_IP}:${HTTPS_PORT:-8443}
+      PUBLIC_URL: ${BINGJIAN_PUBLIC_URL:-http://${NAS_IP:?请在 .env 填写 NAS_IP}:${HTTP_PORT:-18080}}
+    ports:
+      - "${NAS_IP}:${HTTP_PORT:-18080}:8000"
     expose:
       - "8000"
     volumes:

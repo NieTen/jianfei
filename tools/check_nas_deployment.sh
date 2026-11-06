@@ -4,7 +4,7 @@ set -euo pipefail
 image=${1:?请指定待验收镜像}
 workspace=$(pwd)
 mkdir -p build deploy/synology/secrets deploy/synology/certificates
-printf 'NAS_IP=127.0.0.1\nHTTPS_PORT=18443\n' > deploy/synology/.env
+printf 'NAS_IP=127.0.0.1\nHTTP_PORT=18080\nHTTPS_PORT=18443\n' > deploy/synology/.env
 export BINGJIAN_IMAGE="$image"
 compose=(docker compose --project-directory "$workspace/deploy/synology" -f "$workspace/deploy/synology/docker-compose.yml" -f "$workspace/build/nas-platform.yml")
 cleanup() {
@@ -38,6 +38,8 @@ for architecture in amd64 arm64; do
             "${compose[@]}" up -d --force-recreate --wait --wait-timeout 240
         fi
         curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 2 \
+            http://127.0.0.1:18080/api/v1/health > "build/nas-${architecture}-http-health-${phase}.json"
+        curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 2 \
             --cacert "$certificate" https://127.0.0.1:18443/api/v1/health > "build/nas-${architecture}-health-${phase}.json"
         curl --fail --silent --show-error --cacert "$certificate" \
             https://127.0.0.1:18443/api/v1/server-info > "build/nas-${architecture}-server-${phase}.json"
@@ -58,7 +60,8 @@ def read(name):
     return json.loads(Path(str(prefix) + name).read_text())
 assert read("-server-before.json")["instance_id"] == read("-server-after.json")["instance_id"]
 assert read("-health-before.json")["status"] == read("-health-after.json")["status"] == "ok"
-print(sys.argv[1] + "：HTTPS、数据保留与实例身份检查通过")
+assert read("-http-health-before.json")["status"] == read("-http-health-after.json")["status"] == "ok"
+print(sys.argv[1] + "：HTTP、HTTPS、数据保留与实例身份检查通过")
 PY
     cleanup
     trap - EXIT
