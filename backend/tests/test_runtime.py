@@ -87,7 +87,8 @@ class RuntimeTests(unittest.TestCase):
                         process.wait(timeout=15)
 
     def wait_ready(self, client, process):
-        deadline = time.monotonic() + 15
+        # QEMU 跨架构运行时导入依赖更慢，CI 可单独调整启动等待时间。
+        deadline = time.monotonic() + float(os.getenv("BINGJIAN_TEST_STARTUP_TIMEOUT", "15"))
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 self.fail("后台进程在启动期间退出")

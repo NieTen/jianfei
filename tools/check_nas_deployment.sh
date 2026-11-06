@@ -16,7 +16,10 @@ for architecture in amd64 arm64; do
     printf 'services:\n  api:\n    platform: linux/%s\n' "$architecture" > build/nas-platform.yml
     trap cleanup EXIT
     docker pull --platform "linux/$architecture" "$image"
-    docker run --rm --platform "linux/$architecture" "$image" \
+    test_startup_timeout=15
+    if [ "$architecture" = arm64 ]; then test_startup_timeout=90; fi
+    docker run --rm --platform "linux/$architecture" \
+        -e "BINGJIAN_TEST_STARTUP_TIMEOUT=$test_startup_timeout" "$image" \
         python -m unittest discover -s tests -v 2>&1 | tee "build/nas-${architecture}-tests.log"
     "${compose[@]}" config --quiet
     "${compose[@]}" up -d --wait --wait-timeout 240
