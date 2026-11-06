@@ -103,7 +103,7 @@ struct CreateChallengeView: View {
                 Text("每项每日最多 1 分。双方项目组合相同才比较累计积分，其他情况展示个人完成率。").font(.caption).foregroundStyle(.secondary)
             }
             Section("当前个人目标") {
-                LabeledContent("目标体重", value: model.goal.targetWeightKg.map { "\($0.concise) kg" } ?? "未设置")
+                LabeledContent("目标体重", value: model.goal.targetWeightKg.map { model.weightUnit.formatted(kilograms: $0) } ?? "未设置")
                 LabeledContent("步数目标", value: "\(model.goal.stepGoal) 步")
                 Text("挑战开始后冻结本次目标快照。修改个人目标可用于后续挑战。").font(.caption).foregroundStyle(.secondary)
             }
@@ -293,7 +293,7 @@ struct ChallengeDetailView: View {
                                 if member["weight_change_percent"] != nil { MetricView(title: "体重变化", value: member.number("weight_change_percent"), unit: "%") }
                                 if member["steps"] != nil { MetricView(title: "步数", value: member.number("steps"), unit: "步") }
                             }
-                            if let weight = member.number("weight_kg") { Text("体重 \(weight.concise) kg").font(.subheadline) }
+                            if let weight = member.number("weight_kg") { Text("体重 \(model.weightUnit.formatted(kilograms: weight))").font(.subheadline) }
                             if let health = member["health"]?.object {
                                 HStack {
                                     MetricView(title: "平均心率", value: health.number("heart_rate"), unit: "次/分")
@@ -467,9 +467,10 @@ struct PartnerHistoryView: View {
         ScrollView {
             Surface {
                 Text("近 30 日已授权测量").font(.headline)
+                Text("体重单位：\(model.weightUnit.name)").font(.caption).foregroundStyle(.secondary)
                 if loading { ProgressView() }
                 Chart(points) {
-                    PointMark(x: .value("日期", $0.date), y: .value("体重 kg", $0.value)).foregroundStyle(Palette.teal)
+                    PointMark(x: .value("日期", $0.date), y: .value("体重 \(model.weightUnit.name)", model.weightUnit.fromKilograms($0.value))).foregroundStyle(Palette.teal)
                 }.chartYScale(domain: .automatic(includesZero: false)).frame(height: 260)
                 Text(message.isEmpty ? "仅绘制有测量且在授权范围内的日期" : message).font(.caption).foregroundStyle(.secondary)
             }.padding(20)

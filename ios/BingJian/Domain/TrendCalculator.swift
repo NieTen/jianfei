@@ -6,7 +6,7 @@ struct TrendResult: Sendable {
 }
 
 enum TrendCalculator {
-    static func calculate(index: RecordIndex, profile: BodyProfile, metric: String, days: Int, end: Date) -> TrendResult {
+    static func calculate(index: RecordIndex, profile: BodyProfile, weightUnit: WeightUnit, metric: String, days: Int, end: Date) -> TrendResult {
         var result = TrendResult(points: [], averages: [])
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: profile.timezone) ?? .current
@@ -20,14 +20,13 @@ enum TrendCalculator {
             var value: Double?
             switch metric {
             case "weight":
-                value = index.representativeWeight(day: day).map { profile.weightUnit == "lb" ? $0 / 0.45359237 : $0 }
+                value = index.representativeWeight(day: day).map { weightUnit.fromKilograms($0) }
                 let window = (0..<7).compactMap { prior -> Double? in
                     guard let previous = calendar.date(byAdding: .day, value: -prior, to: date) else { return nil }
                     return index.representativeWeight(day: TimeFormat.day(previous, timezone: profile.timezone))
                 }
                 if window.count >= 3 {
-                    var average = window.reduce(0, +) / Double(window.count)
-                    if profile.weightUnit == "lb" { average /= 0.45359237 }
+                    let average = weightUnit.fromKilograms(window.reduce(0, +) / Double(window.count))
                     result.averages.append(TrendPoint(day: day, date: date, value: average))
                 }
             case "waist": value = measurement?.waistCm

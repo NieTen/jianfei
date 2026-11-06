@@ -5,6 +5,7 @@ struct WeightEditorView: View {
     @Environment(\.dismiss) private var dismiss
     var existing: AppRecord?
     @State private var amount: Double?
+    @State private var unit = WeightUnit.kg
     @State private var measuredAt = Date()
     @State private var note = ""
     @State private var representative = false
@@ -14,7 +15,15 @@ struct WeightEditorView: View {
     var body: some View {
         Form {
             Section("体重") {
-                TextField("体重 \(model.profile.weightUnit)", value: $amount, format: .number).keyboardType(.decimalPad)
+                Picker("本机体重单位", selection: Binding(get: { unit }, set: { newUnit in
+                    amount = amount.map { unit.converted($0, to: newUnit) }
+                    unit = newUnit
+                })) {
+                    ForEach(WeightUnit.allCases) { Text($0.title).tag($0) }
+                }
+                TextField("体重 \(unit.name)", value: $amount, format: .number).keyboardType(.decimalPad)
+                Text("保存后，本机的体重、目标、历史和伙伴数据统一使用此单位，下次录入自动沿用。")
+                    .font(.caption).foregroundStyle(.secondary)
                 DatePicker("测量时间", selection: $measuredAt, in: ...Date())
                     .disabled(existing?.decode(WeightEntry.self)?.source == "healthkit")
                 Toggle("指定为当天代表体重", isOn: $representative)
@@ -34,7 +43,8 @@ struct WeightEditorView: View {
             loaded = true
             let previous = existing?.decode(WeightEntry.self)
             let kg = previous?.correctedWeightKg ?? previous?.weightKg ?? model.summary.weight
-            amount = kg.map { model.profile.weightUnit == "lb" ? $0 / 0.45359237 : $0 }
+            unit = model.weightUnit
+            amount = kg.map { unit.fromKilograms($0) }
             measuredAt = previous.flatMap { TimeFormat.parse($0.measuredAt) } ?? model.entryDate
             note = previous?.note ?? ""
             representative = previous?.representative ?? false
@@ -46,14 +56,11 @@ struct WeightEditorView: View {
 
     private func save() async {
         guard let amount, amount > 0 else { message = "请输入有效体重"; return }
-        let kilograms = model.profile.weightUnit == "lb" ? amount * 0.45359237 : amount
-        guard kilograms <= 600 else { message = "请核对体重和单位"; return }
-        var value = existing?.decode(WeightEntry.self) ?? WeightEntry(weightKg: kilograms)
-        if value.source == "healthkit" { value.correctedWeightKg = kilograms }
-        else { value.weightKg = kilograms; value.measuredAt = TimeFormat.iso(measuredAt) }
-        value.note = note
-        value.representative = representative
-        do { try await model.saveWeight(value, existing: existing); dismiss() }
+        do {
+            try await model.recordWeight(amount, unit: unit, measuredAt: measuredAt, note: note,
+                                         representative: representative, existing: existing)
+            dismiss()
+        }
         catch { message = error.localizedDescription }
     }
 }
@@ -62,6 +69,9 @@ struct MeasurementEditorView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var value = MeasurementEntry()
+    @State private var muscleAmount: Double?
+    @State private var unit = WeightUnit.kg
+    @State private var loaded = false
     @State private var date = Date()
     @State private var message: String?
     var existing: AppRecord?
@@ -71,7 +81,7 @@ struct MeasurementEditorView: View {
             TextField("腰围 cm", value: $value.waistCm, format: .number).keyboardType(.decimalPad)
             TextField("臀围 cm", value: $value.hipCm, format: .number).keyboardType(.decimalPad)
             TextField("体脂率 %", value: $value.bodyFatPercent, format: .number).keyboardType(.decimalPad)
-            TextField("肌肉量 kg", value: $value.muscleKg, format: .number).keyboardType(.decimalPad)
+            TextField("肌肉量 \(unit.name)", value: $muscleAmount, format: .number).keyboardType(.decimalPad)
             TextField("来源或测量条件", text: $value.note, axis: .vertical)
         }
         .navigationTitle("身体组成与围度")
@@ -80,6 +90,7 @@ struct MeasurementEditorView: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button("保存") {
                     Task {
+                        value.muscleKg = muscleAmount.map { unit.kilograms(from: $0) }
                         let values = [value.waistCm, value.hipCm, value.bodyFatPercent, value.muscleKg].compactMap { $0 }
                         guard !values.isEmpty, values.allSatisfy({ $0 > 0 }), (value.bodyFatPercent ?? 0) <= 100 else {
                             message = "至少填写一个有效指标，体脂率范围为 0～100%"
@@ -97,10 +108,14 @@ struct MeasurementEditorView: View {
             }
         }
         .task {
+            guard !loaded else { return }
+            loaded = true
+            unit = model.weightUnit
             if let original = existing?.decode(MeasurementEntry.self) {
                 value = original
                 date = TimeFormat.parse(original.measuredAt) ?? Date()
             }
+            muscleAmount = value.muscleKg.map { unit.fromKilograms($0) }
         }
         .alert("请检查数据", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("知道了", role: .cancel) {}
@@ -119,6 +134,7 @@ struct ProfileEditorView: View {
     @State private var feet: Double?
     @State private var inches: Double?
     @State private var targetWeight: Double?
+    @State private var weightUnit = WeightUnit.kg
     @State private var loaded = false
     @State private var message: String?
 
@@ -154,7 +170,7 @@ struct ProfileEditorView: View {
                 }
             }
             Section("个人目标") {
-                TextField("目标体重 \(profile.weightUnit)", value: $targetWeight, format: .number).keyboardType(.decimalPad)
+                TextField("目标体重 \(weightUnit.name)", value: $targetWeight, format: .number).keyboardType(.decimalPad)
                 DatePicker("目标结束日期", selection: $endDate, in: Date()..., displayedComponents: .date)
                 TextField("每日步数目标", value: $goal.stepGoal, format: .number).keyboardType(.numberPad)
                 Picker("日常活动水平", selection: $profile.activityFactor) {
@@ -180,12 +196,12 @@ struct ProfileEditorView: View {
                 }
             }
             Section("单位与统计时间") {
-                Picker("体重单位", selection: Binding(get: { profile.weightUnit }, set: { unit in
-                    if unit != profile.weightUnit {
-                        targetWeight = targetWeight.map { unit == "lb" ? $0 / 0.45359237 : $0 * 0.45359237 }
-                        profile.weightUnit = unit
-                    }
-                })) { Text("kg").tag("kg"); Text("lb").tag("lb") }
+                Picker("本机体重单位", selection: Binding(get: { weightUnit }, set: { unit in
+                    targetWeight = targetWeight.map { weightUnit.converted($0, to: unit) }
+                    weightUnit = unit
+                })) { ForEach(WeightUnit.allCases) { Text($0.title).tag($0) } }
+                Text("伙伴数据也会转换为你的单位；伙伴看到的数据按他们自己的单位显示。")
+                    .font(.caption).foregroundStyle(.secondary)
                 Picker("身高单位", selection: Binding(get: { profile.heightUnit }, set: { unit in
                     if unit == "ft-in", let cm = profile.heightCm {
                         feet = floor(cm / 30.48)
@@ -220,7 +236,8 @@ struct ProfileEditorView: View {
             goal = model.goal
             if let date = profile.birthDate { birthday = TimeFormat.window(date, timezone: profile.timezone)?.start ?? Date(); useBirthday = true }
             endDate = TimeFormat.window(goal.endDate, timezone: profile.timezone)?.start ?? Date()
-            targetWeight = goal.targetWeightKg.map { profile.weightUnit == "lb" ? $0 / 0.45359237 : $0 }
+            weightUnit = model.weightUnit
+            targetWeight = goal.targetWeightKg.map { weightUnit.fromKilograms($0) }
             if let cm = profile.heightCm {
                 feet = floor(cm / 30.48)
                 inches = (cm - (feet ?? 0) * 30.48) / 2.54
@@ -237,11 +254,12 @@ struct ProfileEditorView: View {
         if let height = profile.heightCm, height <= 0 || height > 300 { message = "请核对身高和单位"; return }
         if let length = profile.stepLengthM, length <= 0 || length > 2 { message = "请填写有效单步长度"; return }
         profile.birthDate = useBirthday ? TimeFormat.day(birthday, timezone: profile.timezone) : nil
-        goal.targetWeightKg = targetWeight.map { profile.weightUnit == "lb" ? $0 * 0.45359237 : $0 }
+        goal.targetWeightKg = targetWeight.map { weightUnit.kilograms(from: $0) }
         goal.endDate = TimeFormat.day(endDate, timezone: profile.timezone)
         do {
             try await model.saveProfile(profile)
             try await model.saveGoal(goal)
+            model.setWeightUnit(weightUnit)
             dismiss()
         } catch { message = error.localizedDescription }
     }

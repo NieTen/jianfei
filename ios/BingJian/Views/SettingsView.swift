@@ -42,6 +42,12 @@ struct SettingsView: View {
                 }
                 Text("使用偏好").font(.headline).foregroundStyle(Palette.ink).padding(.horizontal, 4)
                 Surface {
+                    Picker("本机体重单位", selection: Binding(get: { model.weightUnit }, set: { model.setWeightUnit($0) })) {
+                        ForEach(WeightUnit.allCases) { Text($0.title).tag($0) }
+                    }.tint(Palette.teal)
+                    Text("体重、目标、历史和伙伴数据统一换算显示，后续录入自动沿用。")
+                        .font(.caption).foregroundStyle(Palette.secondary)
+                    Divider()
                     NavigationLink { ReminderSettingsView() } label: { SettingsRow(title: "提醒与通知", symbol: "bell") }
                     NavigationLink { FavoritesManagementView() } label: { SettingsRow(title: "常用食物", symbol: "bookmark") }
                 }
@@ -50,7 +56,7 @@ struct SettingsView: View {
                     Text("所有主动记录先保存到手机。个人同步、伙伴共享和外部 AI 处理分别控制。")
                     Text("导出文件由你保管密码。仅本机数据可通过加密导出包恢复，卸载前请确认备份。")
                     PrivacyNote()
-                    Text("并肩 · 0.1.3").font(.caption2)
+                    Text("并肩 · 0.1.4").font(.caption2)
                 }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 4)
             }.padding(20).buttonStyle(.plain)
         }.background(Palette.canvas).navigationTitle("我的").navigationBarTitleDisplayMode(.inline)

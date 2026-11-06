@@ -24,11 +24,11 @@ struct DashboardView: View {
                 Surface {
                     Label("身体与活动", systemImage: "heart").font(.headline).foregroundStyle(Palette.ink)
                     adaptiveRow {
-                        MetricView(title: "最近体重", value: displayedWeight(model.summary.weight), unit: model.profile.weightUnit)
+                        MetricView(title: "最近体重", value: displayedWeight(model.summary.weight), unit: model.weightUnit.name)
                         MetricView(title: "所选日期步数", value: model.summary.steps, unit: "步")
                     }
                     if let target = model.goal.targetWeightKg {
-                        Text("个人目标 \(displayedWeight(target)?.concise ?? "") \(model.profile.weightUnit)").font(.caption).foregroundStyle(Palette.secondary)
+                        Text("个人目标 \(displayedWeight(target)?.concise ?? "") \(model.weightUnit.name)").font(.caption).foregroundStyle(Palette.secondary)
                     }
                     Divider().overlay(Palette.border)
                     NavigationLink { HealthDetailView() } label: {
@@ -146,5 +146,5 @@ struct DashboardView: View {
     }
 
     private func displayedEnergy(_ value: Double?) -> Double? { value.map { model.profile.energyUnit == "kJ" ? $0 * 4.184 : $0 } }
-    private func displayedWeight(_ value: Double?) -> Double? { value.map { model.profile.weightUnit == "lb" ? $0 / 0.45359237 : $0 } }
+    private func displayedWeight(_ value: Double?) -> Double? { value.map { model.weightUnit.fromKilograms($0) } }
 }

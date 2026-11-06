@@ -6,6 +6,8 @@ import Vision
 
 @MainActor
 final class AppModel: ObservableObject {
+    static let weightUnitPreferenceKey = "preferred_weight_unit"
+    @Published private(set) var weightUnit = WeightUnit(rawValue: UserDefaults.standard.string(forKey: AppModel.weightUnitPreferenceKey) ?? "") ?? .kg
     @Published var records: [AppRecord] = []
     @Published var selectedDate = Date() {
         didSet {
@@ -104,6 +106,11 @@ final class AppModel: ObservableObject {
 
     var profile: BodyProfile { activeProfile }
     var editableProfile: BodyProfile { pendingProfileRecord?.decode(BodyProfile.self) ?? profile }
+    func setWeightUnit(_ unit: WeightUnit) {
+        UserDefaults.standard.set(unit.rawValue, forKey: Self.weightUnitPreferenceKey)
+        weightUnit = unit
+        publishWatchContext()
+    }
     private var pendingProfileRecord: AppRecord? {
         recordIndex.profiles.first {
             ($0.payload["effective_at"]?.string.flatMap(TimeFormat.parse) ?? .distantPast) > Date()
@@ -191,6 +198,10 @@ final class AppModel: ObservableObject {
             records = rows
             recordIndex = prepared
             activeProfile = prepared.currentProfile()
+            // 只迁移一次旧版档案单位；后续同步、换账号都不覆盖本机选择。
+            if UserDefaults.standard.string(forKey: Self.weightUnitPreferenceKey) == nil, !prepared.profiles.isEmpty {
+                setWeightUnit(WeightUnit(rawValue: activeProfile.weightUnit) ?? .kg)
+            }
             dataRevision += 1
             pendingCount = try await store.pendingCount()
             conflicts = try await store.conflicts()
@@ -284,6 +295,21 @@ final class AppModel: ObservableObject {
             day: TimeFormat.day(TimeFormat.parse(value.measuredAt) ?? Date(), timezone: profile.timezone, startMinutes: profile.dayStartMinutes), value: value)
         record.payload = try Codec.object(value)
         try await saveRecord(record)
+    }
+
+    func recordWeight(_ amount: Double, unit: WeightUnit, measuredAt: Date, note: String,
+                      representative: Bool, existing: AppRecord? = nil) async throws {
+        let kilograms = unit.kilograms(from: amount)
+        guard kilograms.isFinite, kilograms > 0, kilograms <= 600 else {
+            throw APIError(code: "INVALID_WEIGHT", message: "请核对体重和单位")
+        }
+        var value = existing?.decode(WeightEntry.self) ?? WeightEntry(weightKg: kilograms)
+        if value.source == "healthkit" { value.correctedWeightKg = kilograms }
+        else { value.weightKg = kilograms; value.measuredAt = TimeFormat.iso(measuredAt) }
+        value.note = note
+        value.representative = representative
+        try await saveWeight(value, existing: existing)
+        setWeightUnit(unit)
     }
 
     func markComplete(_ complete: Bool) async throws {
@@ -842,6 +868,7 @@ final class AppModel: ObservableObject {
         let today = TimeFormat.day(timezone: profile.timezone, startMinutes: profile.dayStartMinutes)
         let summary = EnergyCalculator.summary(records: recordIndex.forSummary(day: today), day: today)
         var context: [String: Any] = ["owner_id": namespace, "day": summary.day, "status": summary.complete ? "已完成记录" : "继续记录"]
+        context["weight_unit"] = weightUnit.rawValue
         if let weight = summary.weight { context["weight"] = weight }
         if let intake = summary.intake { context["intake"] = intake }
         if let steps = summary.steps { context["steps"] = steps }

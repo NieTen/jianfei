@@ -4,6 +4,7 @@ import WatchConnectivity
 @MainActor
 final class PhoneWatchBridge: NSObject {
     var onRecord: (([String: Any]) async throws -> Void)?
+    private var pendingContext: [String: Any]?
 
     func activate() {
         guard WCSession.isSupported() else { return }
@@ -12,6 +13,7 @@ final class PhoneWatchBridge: NSObject {
     }
 
     func update(_ values: [String: Any]) {
+        pendingContext = values
         guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
         try? WCSession.default.updateApplicationContext(values)
     }
@@ -24,7 +26,11 @@ final class PhoneWatchBridge: NSObject {
 }
 
 extension PhoneWatchBridge: WCSessionDelegate {
-    nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {}
+    nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+        Task { @MainActor in
+            if let values = self.pendingContext { self.update(values) }
+        }
+    }
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
     nonisolated func sessionDidDeactivate(_ session: WCSession) { session.activate() }
 

@@ -90,7 +90,7 @@ def resources():
         "CFBundleDevelopmentRegion": "zh_CN", "CFBundleExecutable": "$(EXECUTABLE_NAME)",
         "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)", "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": "$(PRODUCT_NAME)", "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.1.3", "CFBundleVersion": "4",
+        "CFBundleShortVersionString": "0.1.4", "CFBundleVersion": "5",
         "NSHealthShareUsageDescription": "读取你授权的步数、消耗、体重、运动、心率和睡眠，用于个人记录与趋势分析。",
         "NSHealthUpdateUsageDescription": "健康数据以你的明确授权为前提，当前版本优先保存本机记录。",
     }
@@ -199,6 +199,11 @@ def main():
         directory = ROOT / name
         directory.mkdir(exist_ok=True)
         group, sources, resource_files = source_group(directory)
+        if name == "BingJianWatch":
+            weight_unit = add("SharedWeightUnit", "PBXFileReference", lastKnownFileType="sourcecode.swift",
+                              path="BingJian/Domain/WeightUnit.swift", sourceTree="SOURCE_ROOT")
+            OBJECTS[group]["children"].append(weight_unit)
+            sources.append(weight_unit)
         if name == "BingJian":
             schema = add("FoodSchema", "PBXFileReference", lastKnownFileType="text.json",
                          path="../backend/app/resources/food_schema.json", sourceTree="SOURCE_ROOT")
@@ -216,7 +221,7 @@ def main():
         settings = {
             "PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": bundle, "SDKROOT": sdk,
             "SWIFT_VERSION": "5.0", "SWIFT_STRICT_CONCURRENCY": "minimal", "CODE_SIGN_STYLE": "Automatic",
-            "CURRENT_PROJECT_VERSION": "4", "MARKETING_VERSION": "0.1.3", "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
+            "CURRENT_PROJECT_VERSION": "5", "MARKETING_VERSION": "0.1.4", "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
             "CLANG_ENABLE_MODULES": "YES", "GENERATE_INFOPLIST_FILE": "NO",
         }
         if name == "BingJianWatch":

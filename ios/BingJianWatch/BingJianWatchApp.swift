@@ -24,7 +24,7 @@ struct WatchDashboard: View {
                         Spacer()
                         Image(systemName: "figure.walk").foregroundStyle(.mint)
                     }
-                    if let weight = model.summary["weight"] { Text("最近体重 \(weight) kg").font(.caption) }
+                    if let weight = model.summary["weight"] { Text("最近体重 \(weight)").font(.caption) }
                     if let intake = model.summary["intake"] { Text("已记录 \(intake) kcal").font(.caption) }
                     NavigationLink {
                         WatchQuickEntry(kind: "weight")
@@ -62,18 +62,24 @@ struct WatchQuickEntry: View {
     let kind: String
     @State private var number = ""
     @State private var name = ""
+    @State private var inputUnit = WeightUnit.kg
     var body: some View {
         Form {
-            TextField(kind == "weight" ? "体重 kg" : "热量 kcal", text: $number)
+            TextField(kind == "weight" ? "体重 \(inputUnit.name)" : "热量 kcal", text: $number)
             if kind == "meal" { TextField("食物名称", text: $name) }
             Button("保存记录") {
                 guard let value = Double(number) else { model.message = "请输入有效数值"; return }
                 do {
-                    try model.save(kind: kind, value: value, name: name)
+                    try model.save(kind: kind, value: kind == "weight" ? inputUnit.kilograms(from: value) : value, name: name)
                     dismiss()
                 } catch { model.message = error.localizedDescription }
             }
             Text("离线时先保存到手表，手机确认后移出待传队列。").font(.caption2).foregroundStyle(.secondary)
         }.navigationTitle(kind == "weight" ? "记体重" : "记饮食")
+            .onAppear { inputUnit = model.weightUnit }
+            .onChange(of: model.weightUnit) { _, newUnit in
+                if let value = Double(number) { number = String(inputUnit.converted(value, to: newUnit)) }
+                inputUnit = newUnit
+            }
     }
 }

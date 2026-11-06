@@ -20,6 +20,7 @@ final class WatchModel: NSObject, ObservableObject {
     @Published var message = ""
     @Published var reachable = false
     @Published var ownerId = ""
+    @Published private(set) var weightUnit = WeightUnit(rawValue: UserDefaults.standard.string(forKey: "phone_weight_unit") ?? "") ?? .kg
     private let healthStore = HKHealthStore()
     private let queueURL: URL
 
@@ -104,6 +105,11 @@ final class WatchModel: NSObject, ObservableObject {
     }
 
     private func receiveContext(_ context: [String: Any]) {
+        if !context.isEmpty {
+            // 旧手机未发送单位时仍按公斤显示；离线待传记录的 value 始终为公斤。
+            weightUnit = WeightUnit(rawValue: context["weight_unit"] as? String ?? "kg") ?? .kg
+            UserDefaults.standard.set(weightUnit.rawValue, forKey: "phone_weight_unit")
+        }
         if let id = context["owner_id"] as? String {
             ownerId = id
             UserDefaults.standard.set(id, forKey: "phone_owner")
@@ -112,6 +118,9 @@ final class WatchModel: NSObject, ObservableObject {
             if let text = $0 as? String { return text }
             if let value = $0 as? Double { return value.formatted(.number.precision(.fractionLength(0...1))) }
             return nil
+        }
+        if let kilograms = context["weight"] as? Double {
+            summary["weight"] = weightUnit.formatted(kilograms: kilograms)
         }
         flush()
     }

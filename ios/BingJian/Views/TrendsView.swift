@@ -104,7 +104,7 @@ struct TrendsView: View {
                                     HStack {
                                         Text(record.businessDate).font(.caption).foregroundStyle(.secondary)
                                         Spacer()
-                                        Text(value.waistCm.map { "腰围 \($0.concise) cm" } ?? value.bodyFatPercent.map { "体脂 \($0.concise)%" } ?? "身体组成")
+                                        Text(value.waistCm.map { "腰围 \($0.concise) cm" } ?? value.bodyFatPercent.map { "体脂 \($0.concise)%" } ?? value.muscleKg.map { "肌肉量 \(model.weightUnit.formatted(kilograms: $0))" } ?? "身体组成")
                                     }
                                 }
                             }
@@ -123,12 +123,12 @@ struct TrendsView: View {
     private var measurements: [AppRecord] { model.recordIndex.byKind["measurement"] ?? [] }
     private var points: [TrendPoint] { trend.points }
     private var calculationKey: String {
-        "\(model.dataRevision)|\(metric)|\(days)|\(customStart.timeIntervalSince1970)|\(customEnd.timeIntervalSince1970)|\(model.day)"
+        "\(model.dataRevision)|\(model.weightUnit.rawValue)|\(metric)|\(days)|\(customStart.timeIntervalSince1970)|\(customEnd.timeIntervalSince1970)|\(model.day)"
     }
     private var visibleDays: Int { days == 0 ? min(3650, max(1, Calendar.current.dateComponents([.day], from: customStart, to: customEnd).day ?? 0) + 1) : days }
     private var unit: String {
         switch metric {
-        case "weight": return model.profile.weightUnit
+        case "weight": return model.weightUnit.name
         case "intake", "expenditure", "deficit": return model.profile.energyUnit
         case "steps": return "步"
         case "waist": return "cm"
@@ -144,11 +144,12 @@ struct TrendsView: View {
         loading = true
         let index = model.recordIndex
         let profile = model.profile
+        let weightUnit = model.weightUnit
         let selectedMetric = metric
         let count = visibleDays
         let end = days == 0 ? customEnd : model.displayDate
         let computation = Task.detached(priority: .userInitiated) {
-            TrendCalculator.calculate(index: index, profile: profile, metric: selectedMetric, days: count, end: end)
+            TrendCalculator.calculate(index: index, profile: profile, weightUnit: weightUnit, metric: selectedMetric, days: count, end: end)
         }
         let value = await withTaskCancellationHandler {
             await computation.value
@@ -173,7 +174,7 @@ struct WeightHistoryView: View {
                     Button { editing = record } label: {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack {
-                                Text("\((weight.correctedWeightKg ?? weight.weightKg).concise) kg").font(.headline)
+                                Text(model.weightUnit.formatted(kilograms: weight.correctedWeightKg ?? weight.weightKg)).font(.headline)
                                 Spacer()
                                 Text(record.businessDate).font(.caption).foregroundStyle(.secondary)
                             }

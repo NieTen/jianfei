@@ -7,8 +7,12 @@ final class AppearanceTests: XCTestCase {
     @MainActor
     func testMainPagesInLightDarkAndLargeType() async throws {
         let previousNamespace = UserDefaults.standard.string(forKey: "local_namespace")
+        let previousWeightUnit = UserDefaults.standard.string(forKey: AppModel.weightUnitPreferenceKey)
         UserDefaults.standard.set(UUID().uuidString.lowercased(), forKey: "local_namespace")
-        defer { UserDefaults.standard.set(previousNamespace, forKey: "local_namespace") }
+        defer {
+            UserDefaults.standard.set(previousNamespace, forKey: "local_namespace")
+            UserDefaults.standard.set(previousWeightUnit, forKey: AppModel.weightUnitPreferenceKey)
+        }
         let model = AppModel()
         model.setupCompleted = true
         model.syncEnabled = false
@@ -30,6 +34,12 @@ final class AppearanceTests: XCTestCase {
         try await capture(OnboardingView(), model: model, name: "welcome-large-text", largeText: true)
         try await capture(MainTabs(selection: .constant("today")), model: model,
                           name: "today-small-screen", compact: true)
+        for unit in [WeightUnit.kg, .jin] {
+            model.setWeightUnit(unit)
+            try await capture(NavigationStack { WeightEditorView() }, model: model, name: "weight-entry-\(unit.rawValue)")
+            try await capture(NavigationStack { WeightHistoryView() }, model: model, name: "weight-history-\(unit.rawValue)")
+        }
+        try await capture(MainTabs(selection: .constant("settings")), model: model, name: "settings-jin-large-text", largeText: true)
     }
 
     @MainActor

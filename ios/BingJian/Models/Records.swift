@@ -37,6 +37,7 @@ struct BodyProfile: Codable, Equatable, Sendable {
     var stepLengthM: Double?
     var timezone = TimeZone.current.identifier
     var dayStartMinutes = 0
+    // 保留旧版同步字段以兼容已有后台；新版本显示单位由 AppModel 的本机偏好决定。
     var weightUnit = "kg"
     var energyUnit = "kcal"
     var heightUnit = "cm"
