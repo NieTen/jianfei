@@ -1,0 +1,55 @@
+# 在 Container Manager 的“项目”中使用；镜像由 GitHub 构建，NAS 无需编译。
+version: "3.8"
+services:
+  api:
+    image: ${BINGJIAN_IMAGE:-ghcr.io/nieten/jianfei-api:latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      TZ: Asia/Shanghai
+      PUBLIC_URL: https://${NAS_IP:?请在 .env 填写 NAS_IP}:${HTTPS_PORT:-8443}
+    expose:
+      - "8000"
+    volumes:
+      - app_data:/data
+      - ./secrets:/run/secrets:ro
+    mem_limit: 512m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SERVER_NAME: ${NAS_IP:?请在 .env 填写 NAS_IP}
+    ports:
+      - "${NAS_IP}:${HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certificates:/certificates
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:

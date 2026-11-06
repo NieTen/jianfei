@@ -1,0 +1,91 @@
+name: 群晖后台镜像发布
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'deploy/synology/**'
+      - 'tools/check_nas_deployment.sh'
+      - '.github/workflows/docker-publish.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: 构建并验证 AMD64 与 ARM64 镜像
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 获取源码
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: 配置 ARM64 模拟运行
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - name: 配置多架构构建器
+        uses: docker/setup-buildx-action@v4
+      - name: 登录当前仓库的镜像服务
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 生成镜像标识
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-api"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          echo "CANDIDATE=$image:sha-$GITHUB_SHA" >> "$GITHUB_ENV"
+          mkdir -p build
+      - name: 构建并上传待验收镜像
+        run: |
+          set -o pipefail
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --tag "$CANDIDATE" --push ./backend 2>&1 | tee build/nas-build.log
+          docker buildx imagetools inspect "$CANDIDATE" --raw > build/nas-manifest.json
+          python3 - <<'PY'
+          import json
+          manifest = json.load(open("build/nas-manifest.json"))
+          platforms = {(item["platform"]["os"], item["platform"]["architecture"]) for item in manifest["manifests"]}
+          assert {("linux", "amd64"), ("linux", "arm64")} <= platforms
+          print("镜像已包含 AMD64 与 ARM64")
+          PY
+      - name: 验证回归、HTTPS 与容器重建
+        run: bash tools/check_nas_deployment.sh "$CANDIDATE"
+      - name: 发布已通过验收的 latest 标签
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:latest" "$CANDIDATE"
+          docker buildx imagetools inspect "$IMAGE:latest" > build/nas-published.txt
+          {
+            echo '## 群晖可直接拉取的后台镜像'
+            echo "镜像：\`$IMAGE:latest\`"
+            echo "本次固定版本：\`$CANDIDATE\`"
+            echo 'AMD64 与 ARM64 均已运行后台回归、HTTPS、开户命令及重建容器后的数据保留检查。'
+            echo 'ARM64 在 QEMU 下验证；实际群晖硬件仍需部署验收。'
+            echo '部署说明：deploy/synology/群晖部署说明.md。镜像发布不会更改包的可见性。'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: 保存构建与部署验收结果
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nas-image-check-${{ github.run_number }}
+          path: build/nas-*
+          if-no-files-found: warn
+          retention-days: 7
