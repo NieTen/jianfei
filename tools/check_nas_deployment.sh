@@ -27,6 +27,8 @@ for architecture in amd64 arm64; do
         if [ "$attempt" -eq 30 ]; then exit 1; fi
         sleep 1
     done
+    # 仅放开导出的公开根证书读取权限，CA 私钥仍留在数据卷中。
+    "${compose[@]}" exec -T caddy chmod 644 /certificates/bingjian-root.crt
     certificate="$workspace/deploy/synology/certificates/bingjian-root.crt"
     for phase in before after; do
         if [ "$phase" = after ]; then
