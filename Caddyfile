@@ -1,3 +1,8 @@
+{
+    # 直接访问内网 IP 时，客户端可能不发送 SNI。
+    default_sni {$SERVER_NAME:localhost}
+}
+
 {$SERVER_NAME:localhost}:443 {
     tls internal
     encode zstd gzip
