@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from app.domain import basal_energy, day_window, energy_summary, food_totals
+from app.domain import basal_energy, day_window, energy_summary, food_totals, representative
 
 
 class EnergyTests(unittest.TestCase):
@@ -37,9 +37,10 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(start.hour, 20)
         self.assertEqual((end - start).total_seconds(), 86400)
 
-    def test_unknown_intake_is_not_zero(self):
+    def test_no_meal_means_zero_recorded_intake_but_incomplete_day(self):
         result = energy_summary("2026-11-03", {}, None, [], {}, {})
-        self.assertIsNone(result["intake_kcal"])
+        self.assertEqual(result["intake_kcal"], 0)
+        self.assertFalse(result["intake_complete"])
         self.assertIsNone(result["deficit_kcal"])
         self.assertIsNone(result["macros"]["protein_g"])
 
@@ -60,3 +61,18 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(result["intake_kcal"], 0)
         self.assertTrue(result["intake_complete"])
 
+
+    def test_balance_without_meals_uses_elapsed_activity_estimate(self):
+        profile = {"sex_for_formula": "male", "height_cm": 168, "age": 31, "timezone": "UTC"}
+        result = energy_summary("2026-11-03", profile, 70, [], {}, {},
+                                datetime(2026, 11, 3, 12, tzinfo=timezone.utc))
+        self.assertEqual(result["intake_kcal"], 0)
+        self.assertEqual(result["expenditure_kcal"], 960)
+        self.assertEqual(result["deficit_kcal"], 960)
+        self.assertFalse(result["intake_complete"])
+        self.assertEqual(len(result["unrecorded_meals"]), 3)
+
+    def test_latest_weight_ignores_old_representative_flag(self):
+        values = [{"measured_at": "2026-11-03T08:00:00Z", "weight_kg": 70, "representative": True},
+                  {"measured_at": "2026-11-03T18:00:00Z", "weight_kg": 71}]
+        self.assertEqual(representative(values), 71)

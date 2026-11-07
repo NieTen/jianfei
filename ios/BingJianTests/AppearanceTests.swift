@@ -56,6 +56,17 @@ final class AppearanceTests: XCTestCase {
                 }.navigationTitle("服务器与账号")
             }, model: model, name: name)
         }
+        try await capture(NavigationStack { MealEditorView(initialMealType: "lunch") }, model: model, name: "meal-photo-entry")
+        let manual = try AppRecord(kind: "meal", day: model.day,
+            value: MealEntry(status: "confirmed", items: [try MealInput.calorieItem(650)]))
+        try await capture(NavigationStack { MealEditorView(existing: manual) }, model: model, name: "meal-manual-calories")
+        let photoMeal = try AppRecord(kind: "meal", day: model.day, value: MealEntry(items: [
+            FoodItem(name: "米饭", amount: 150, basisKcal: 116, basisProteinG: 2.6, basisCarbsG: 25.9, basisFatG: 0.3, source: "ai_estimate"),
+            FoodItem(name: "鸡胸肉", amount: 120, basisKcal: 165, basisProteinG: 31, basisCarbsG: 0, basisFatG: 3.6, source: "ai_estimate")]))
+        try await capture(NavigationStack { MealEditorView(existing: photoMeal) }, model: model, name: "meal-nutrition-summary")
+        try await capture(OnboardingView(initialStep: 1), model: model, name: "welcome-activity")
+        try await capture(OnboardingView(initialStep: 2), model: model, name: "welcome-connections")
+        try await capture(OnboardingView(), model: model, name: "welcome-small-screen", compact: true)
         _ = model.health.reportFailure(NSError(domain: HKErrorDomain, code: 4,
             userInfo: [NSLocalizedDescriptionKey: "Missing com.apple.developer.healthkit entitlement."]))
         try await capture(NavigationStack { HealthSettingsView() }, model: model, name: "health-signing-help")

@@ -193,6 +193,9 @@ jobs:
       - name: 收集页面截图
         if: always()
         run: |
+          if [ -d build/Appearance.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/Appearance.xcresult --output-path build/ui-interactions
+          fi
           if [ -n "$SIMULATOR_ID" ]; then
             app_data=$(xcrun simctl get_app_container "$SIMULATOR_ID" com.bingjian.health data 2>/dev/null || true)
             if [ -d "$app_data/Documents/StyleReview" ]; then
@@ -207,6 +210,7 @@ jobs:
           path: |
             build/BingJian-simulator.zip
             build/ui-preview
+            build/ui-interactions
           if-no-files-found: error
           retention-days: 7
 
@@ -222,4 +226,5 @@ jobs:
             build/simulator-signature.log
             build/Appearance.xcresult
             build/ui-preview
+            build/ui-interactions
           retention-days: 7

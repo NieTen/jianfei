@@ -110,6 +110,14 @@ actor LocalDatabase {
         return try Codec.decoder().decode(AppRecord.self, from: data)
     }
 
+    func save(_ records: [AppRecord], deviceId: String) throws {
+        for record in records { try RecordValidator.validate(record) }
+        // 首次引导中的档案和体重同时落库，避免只保存一半后退出引导。
+        try transaction {
+            for record in records { try saveValidated(record, deviceId: deviceId, sync: true) }
+        }
+    }
+
     func save(_ record: AppRecord, deviceId: String, sync: Bool = true) throws {
         try RecordValidator.validate(record)
         try transaction { try saveValidated(record, deviceId: deviceId, sync: sync) }

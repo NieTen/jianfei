@@ -90,7 +90,7 @@ def resources():
         "CFBundleDevelopmentRegion": "zh_CN", "CFBundleExecutable": "$(EXECUTABLE_NAME)",
         "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)", "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": "$(PRODUCT_NAME)", "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.1.6", "CFBundleVersion": "7",
+        "CFBundleShortVersionString": "0.1.7", "CFBundleVersion": "8",
         "NSHealthShareUsageDescription": "读取你授权的步数、消耗、体重、运动、心率和睡眠，用于个人记录与趋势分析。",
         "NSHealthUpdateUsageDescription": "健康数据以你的明确授权为前提，当前版本优先保存本机记录。",
     }
@@ -158,7 +158,7 @@ def app_icons():
         }, indent=2), encoding="utf-8")
 
 
-def scheme(project, app_id, tests_id):
+def scheme(project, app_id, tests_id, ui_tests_id):
     root = Element("Scheme", {"LastUpgradeVersion": "1600", "version": "1.7"})
     build = SubElement(root, "BuildAction", {"parallelizeBuildables": "YES", "buildImplicitDependencies": "YES"})
     entries = SubElement(build, "BuildActionEntries")
@@ -175,6 +175,8 @@ def scheme(project, app_id, tests_id):
     testables = SubElement(testing, "Testables")
     testable = SubElement(testables, "TestableReference", {"skipped": "NO"})
     reference(testable, tests_id, "BingJianTests", "BingJianTests.xctest")
+    ui_testable = SubElement(testables, "TestableReference", {"skipped": "NO"})
+    reference(ui_testable, ui_tests_id, "BingJianUITests", "BingJianUITests.xctest")
     launch = SubElement(root, "LaunchAction", {"buildConfiguration": "Debug", "selectedDebuggerIdentifier": "Xcode.DebuggerFoundation.Debugger.LLDB",
         "selectedLauncherIdentifier": "Xcode.IDEFoundation.Launcher.LLDB", "launchStyle": "0", "useCustomWorkingDirectory": "NO",
         "ignoresPersistentStateOnLaunch": "NO", "debugDocumentVersioning": "YES", "debugServiceExtension": "internal", "allowLocationSimulation": "YES"})
@@ -198,6 +200,7 @@ def main():
         ("BingJianWatch", "watchos", "$(APP_BUNDLE_IDENTIFIER).watchkitapp", "com.apple.product-type.application"),
         ("BingJian", "iphoneos", "$(APP_BUNDLE_IDENTIFIER)", "com.apple.product-type.application"),
         ("BingJianTests", "iphoneos", "$(APP_BUNDLE_IDENTIFIER).tests", "com.apple.product-type.bundle.unit-test"),
+        ("BingJianUITests", "iphoneos", "$(APP_BUNDLE_IDENTIFIER).uitests", "com.apple.product-type.bundle.ui-testing"),
     ]
     for name, sdk, bundle, product_type in specifications:
         directory = ROOT / name
@@ -225,7 +228,7 @@ def main():
         settings = {
             "PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": bundle, "SDKROOT": sdk,
             "SWIFT_VERSION": "5.0", "SWIFT_STRICT_CONCURRENCY": "minimal", "CODE_SIGN_STYLE": "Automatic",
-            "CURRENT_PROJECT_VERSION": "7", "MARKETING_VERSION": "0.1.6", "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
+            "CURRENT_PROJECT_VERSION": "8", "MARKETING_VERSION": "0.1.7", "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
             "CLANG_ENABLE_MODULES": "YES", "GENERATE_INFOPLIST_FILE": "NO",
         }
         if name == "BingJianWatch":
@@ -251,9 +254,13 @@ def main():
             settings.update({"IPHONEOS_DEPLOYMENT_TARGET": "17.0", "GENERATE_INFOPLIST_FILE": "YES",
                              "TARGETED_DEVICE_FAMILY": "1", "TEST_HOST": "$(BUILT_PRODUCTS_DIR)/BingJian.app/BingJian",
                              "BUNDLE_LOADER": "$(TEST_HOST)", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator"})
-            proxy = add("TestHostProxy", "PBXContainerItemProxy", containerPortal=project_id, proxyType=1,
+            if name == "BingJianUITests":
+                settings.pop("TEST_HOST")
+                settings.pop("BUNDLE_LOADER")
+                settings["TEST_TARGET_NAME"] = "BingJian"
+            proxy = add(name + "HostProxy", "PBXContainerItemProxy", containerPortal=project_id, proxyType=1,
                         remoteGlobalIDString=identifier("BingJianTarget"), remoteInfo="BingJian")
-            dependencies.append(add("TestDependency", "PBXTargetDependency", target=identifier("BingJianTarget"), targetProxy=proxy))
+            dependencies.append(add(name + "Dependency", "PBXTargetDependency", target=identifier("BingJianTarget"), targetProxy=proxy))
         target_ids.append(add(name + "Target", "PBXNativeTarget", buildConfigurationList=configurations(name, settings),
                               buildPhases=phases, buildRules=[], dependencies=dependencies, name=name,
                               productName=name, productReference=product, productType=product_type))
@@ -268,7 +275,7 @@ def main():
     project.mkdir(exist_ok=True)
     document = {"archiveVersion": 1, "classes": {}, "objectVersion": 56, "objects": OBJECTS, "rootObject": project_id}
     (project / "project.pbxproj").write_text("// !$*UTF8*$!\n" + serialize(document) + "\n", encoding="utf-8")
-    scheme(project, identifier("BingJianTarget"), identifier("BingJianTestsTarget"))
+    scheme(project, identifier("BingJianTarget"), identifier("BingJianTestsTarget"), identifier("BingJianUITestsTarget"))
     print(f"已生成工程，源文件数量 {len(list(ROOT.rglob('*.swift')))}")
 
 

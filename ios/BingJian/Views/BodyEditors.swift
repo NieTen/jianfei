@@ -7,27 +7,32 @@ struct WeightEditorView: View {
     @State private var amount: Double?
     @State private var unit = WeightUnit.kg
     @State private var measuredAt = Date()
+    @State private var selectedDay = Date()
     @State private var note = ""
-    @State private var representative = false
+    @State private var saving = false
     @State private var loaded = false
     @State private var message: String?
 
     var body: some View {
         Form {
             Section("体重") {
-                Picker("本机体重单位", selection: Binding(get: { unit }, set: { newUnit in
-                    amount = amount.map { unit.converted($0, to: newUnit) }
-                    unit = newUnit
-                })) {
-                    ForEach(WeightUnit.allCases) { Text($0.title).tag($0) }
-                }
-                TextField("体重 \(unit.name)", value: $amount, format: .number).keyboardType(.decimalPad)
-                Text("保存后，本机的体重、目标、历史和伙伴数据统一使用此单位，下次录入自动沿用。")
-                    .font(.caption).foregroundStyle(.secondary)
-                DatePicker("测量时间", selection: $measuredAt, in: ...Date())
+                DatePicker("日期", selection: Binding(get: { selectedDay }, set: { value in
+                    selectedDay = value
+                    let day = TimeFormat.day(value, timezone: model.profile.timezone)
+                    measuredAt = RecordDate.timestamp(for: day, profile: model.profile)
+                    amount = nil
+                }), in: ...Date(), displayedComponents: .date)
+                    .environment(\.timeZone, TimeZone(identifier: model.profile.timezone) ?? .current)
                     .disabled(existing?.decode(WeightEntry.self)?.source == "healthkit")
-                Toggle("指定为当天代表体重", isOn: $representative)
-                TextField("测量备注", text: $note, axis: .vertical)
+                WeightInputRow(amount: $amount, unit: $unit)
+                Text("自动带入上次体重；切换日期后请重新填写。当天显示最后一次测量。")
+                    .font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup("记录时间与备注（可选）") {
+                    DatePicker("测量时间", selection: $measuredAt, in: ...Date())
+                        .disabled(existing?.decode(WeightEntry.self)?.source == "healthkit")
+                    Text("默认使用当前时间，补记过去的测量时可以修改。").font(.caption).foregroundStyle(.secondary)
+                    TextField("测量备注", text: $note, axis: .vertical)
+                }
             }
             if existing?.decode(WeightEntry.self)?.source == "healthkit" {
                 Section { Text("本次保存为关联修正，健康 App 中的原始测量仍可追溯。").font(.caption).foregroundStyle(.secondary) }
@@ -36,18 +41,19 @@ struct WeightEditorView: View {
         .navigationTitle("记录体重")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
-            ToolbarItem(placement: .confirmationAction) { Button("保存") { Task { await save() } } }
+            ToolbarItem(placement: .confirmationAction) { Button(saving ? "保存中" : "保存") { Task { await save() } }.disabled(saving) }
         }
         .task {
             guard !loaded else { return }
             loaded = true
             let previous = existing?.decode(WeightEntry.self)
-            let kg = previous?.correctedWeightKg ?? previous?.weightKg ?? model.summary.weight
+            let kg = previous?.correctedWeightKg ?? previous?.weightKg
+                ?? EnergyCalculator.weight(model.recordIndex.forSummary(day: model.day), day: model.day)
             unit = model.weightUnit
             amount = kg.map { unit.fromKilograms($0) }
             measuredAt = previous.flatMap { TimeFormat.parse($0.measuredAt) } ?? model.entryDate
+            selectedDay = TimeFormat.window(existing?.businessDate ?? model.day, timezone: model.profile.timezone)?.start ?? measuredAt
             note = previous?.note ?? ""
-            representative = previous?.representative ?? false
         }
         .alert("请检查体重", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("知道了", role: .cancel) {}
@@ -55,10 +61,13 @@ struct WeightEditorView: View {
     }
 
     private func save() async {
+        guard !saving else { return }
         guard let amount, amount > 0 else { message = "请输入有效体重"; return }
+        saving = true
+        defer { saving = false }
         do {
             try await model.recordWeight(amount, unit: unit, measuredAt: measuredAt, note: note,
-                                         representative: representative, existing: existing)
+                                         representative: false, existing: existing)
             dismiss()
         }
         catch { message = error.localizedDescription }

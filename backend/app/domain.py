@@ -70,7 +70,7 @@ def energy_summary(day, profile, weight, meals, health, completion, now=None):
         active = rounded(number("0.5") * number(weight) * number(health["steps"]) * number(profile["step_length_m"]) / 1000)
         method = "walking_estimate"
     expenditure = rounded(number(resting) + number(active)) if resting is not None and active is not None else None
-    if expenditure is None and now >= end and bmr is not None:
+    if expenditure is None and bmr is not None:
         expenditure = rounded(number(bmr) * number(elapsed) / 86400 * number(profile.get("activity_factor", 1.2)))
         method = "activity_factor"
     intake, macro_totals, missing = Decimal(0), {"protein_g": Decimal(0), "carbs_g": Decimal(0), "fat_g": Decimal(0)}, set()
@@ -101,7 +101,8 @@ def energy_summary(day, profile, weight, meals, health, completion, now=None):
     routine = completion.get("routine_meals", profile.get("routine_meals", ["breakfast", "lunch", "dinner"]))
     unrecorded = [name for name in routine if name not in confirmed_types]
     complete = bool(completion.get("intake_complete")) and not pending and not unrecorded and "kcal" not in missing
-    intake_value = rounded(intake) if known_energy else None
+    # 零表示尚无已记录摄入，不表示用户未进食；未知食物热量仍保留空值。
+    intake_value = rounded(intake) if known_energy or "kcal" not in missing else None
     deficit = rounded(number(expenditure) - intake) if expenditure is not None and intake_value is not None and "kcal" not in missing else None
     forecast = rounded(number(bmr) * number((end - start).total_seconds()) / 86400 * number(profile.get("activity_factor", 1.2))) if bmr is not None else None
     return {
@@ -121,7 +122,6 @@ def representative(weights):
     if not valid:
         return None
     chosen = min(valid, key=lambda value: (
-        -int(value.get("representative", False)),
         -datetime.fromisoformat(value["measured_at"].replace("Z", "+00:00")).timestamp(),
         -int(value.get("source") == "manual"), value.get("_record_id", ""),
     ))

@@ -27,12 +27,12 @@ def actor(request: Request, authorization: str | None = Header(default=None)):
 
 @router.get("/health")
 def health():
-    return {"status": "ok", "version": "0.1.6", "registration_requires_code": False}
+    return {"status": "ok", "version": "0.1.7", "registration_requires_code": False}
 
 
 @router.get("/version")
 def version():
-    return {"version": "0.1.6", "api_version": 1, "minimum_client": 1, "maximum_client": 1}
+    return {"version": "0.1.7", "api_version": 1, "minimum_client": 1, "maximum_client": 1}
 
 
 @router.get("/server-info")

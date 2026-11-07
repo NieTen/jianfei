@@ -16,10 +16,10 @@ struct DashboardView: View {
                 adaptiveRow {
                     Button { showMeal = true } label: {
                         ActionTile(title: "记一餐", subtitle: "拍照或手动添加", symbol: "camera", prominent: true)
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.plain).accessibilityIdentifier("dashboard.meal")
                     Button { showWeight = true } label: {
                         ActionTile(title: "记体重", subtitle: "留下身体的变化", symbol: "scalemass")
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.plain).accessibilityIdentifier("dashboard.weight")
                 }
                 Surface {
                     Label("身体与活动", systemImage: "heart").font(.headline).foregroundStyle(Palette.ink)
@@ -104,7 +104,7 @@ struct DashboardView: View {
                     Text(model.summary.deficit.map { "\(abs(displayedEnergy($0) ?? 0).concise) \(model.profile.energyUnit)" } ?? "等待记录")
                         .font(.subheadline.weight(.semibold)).monospacedDigit()
                 }
-                Text(model.summary.complete ? "饮食记录已确认。\(model.summary.method)" : "暂估结果 · \(model.summary.missingMeals.map(MealTypes.name).joined(separator: "、"))尚待完善")
+                Text(model.summary.complete ? "饮食记录已确认。\(model.summary.method)" : "按已记录摄入暂估，未记录的餐次不代表未进食。\(model.summary.method)")
                     .font(.caption).foregroundStyle(Palette.mint).fixedSize(horizontal: false, vertical: true)
                 if let forecast = model.summary.forecast {
                     Text("全天参考预测 \(displayedEnergy(forecast)?.concise ?? "") \(model.profile.energyUnit)")

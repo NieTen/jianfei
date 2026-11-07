@@ -3,14 +3,14 @@ import SwiftUI
 struct MealsView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dynamicTypeSize) private var typeSize
-    @State private var newMeal = false
+    @State private var newMeal: MealComposerRoute?
     @State private var editing: AppRecord?
     var body: some View {
         ScrollView {
             VStack(spacing: 22) {
                 PageHeading(title: "好好吃，也好好记", subtitle: "从每一餐，了解自己的饮食节奏。")
                 DateStrip()
-                Button { newMeal = true } label: {
+                Button { newMeal = MealComposerRoute() } label: {
                     Label("记录这一餐", systemImage: "plus")
                 }.buttonStyle(FilledActionStyle())
                 Surface {
@@ -72,10 +72,19 @@ struct MealsView: View {
                         Label("待补充的餐次", systemImage: "clock").font(.headline).foregroundStyle(Palette.ink)
                         ForEach(model.summary.missingMeals, id: \.self) { type in
                             HStack {
-                                Text(MealTypes.name(type)).font(.subheadline).foregroundStyle(Palette.ink)
-                                Spacer()
-                                Button("本餐未进食") { model.perform { try await model.skipMeal(type) } }
-                                    .font(.subheadline).frame(minHeight: 44)
+                                Button { newMeal = MealComposerRoute(mealType: type) } label: {
+                                    HStack {
+                                        Text(MealTypes.name(type)).foregroundStyle(Palette.ink)
+                                        Spacer()
+                                        Text("去记录").foregroundStyle(Palette.teal)
+                                        Image(systemName: "chevron.right").font(.caption)
+                                    }.frame(minHeight: 48).contentShape(Rectangle())
+                                }.buttonStyle(.plain).accessibilityIdentifier("meal.pending.\(type)")
+                                Menu {
+                                    Button("明确标记本餐未进食") { model.perform { try await model.skipMeal(type) } }
+                                } label: {
+                                    Image(systemName: "ellipsis").frame(width: 44, height: 48)
+                                }.accessibilityLabel("\(MealTypes.name(type))的其他操作")
                             }.padding(.horizontal, 12).background(Palette.canvas, in: RoundedRectangle(cornerRadius: 14))
                         }
                     }
@@ -88,8 +97,8 @@ struct MealsView: View {
         .background(Palette.canvas)
         .navigationTitle("饮食")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { Button("记录", systemImage: "plus") { newMeal = true } }
-        .sheet(isPresented: $newMeal) { NavigationStack { MealEditorView() } }
+        .toolbar { Button("记录", systemImage: "plus") { newMeal = MealComposerRoute() } }
+        .sheet(item: $newMeal) { route in NavigationStack { MealEditorView(initialMealType: route.mealType) } }
         .sheet(item: $editing) { record in NavigationStack { MealEditorView(existing: record) } }
     }
 
@@ -105,4 +114,9 @@ struct MealsView: View {
         default: return "cup.and.saucer"
         }
     }
+}
+
+struct MealComposerRoute: Identifiable {
+    let id = UUID()
+    var mealType: String?
 }

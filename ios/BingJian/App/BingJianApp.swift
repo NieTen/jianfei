@@ -42,7 +42,8 @@ struct RootView: View {
     @State private var selectedTab = "today"
     var body: some View {
         Group {
-            if !model.setupCompleted { OnboardingView() }
+            if !model.hasLoadedRecords { ProgressView("正在载入记录…") }
+            else if !model.setupCompleted || !model.profileSetupCompleted { OnboardingView() }
             else { MainTabs(selection: $selectedTab) }
         }
         .alert("操作未完成", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {

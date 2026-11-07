@@ -46,7 +46,7 @@ enum EnergyCalculator {
         let value = candidates.filter { $0.0 == newestDay }.sorted {
             let lhs = $0.2
             let rhs = $1.2
-            if lhs.representative != rhs.representative { return lhs.representative }
+            // 兼容旧记录中的代表标记，但始终以当天最后一次测量为准。
             let leftDate = TimeFormat.parse(lhs.measuredAt) ?? .distantPast
             let rightDate = TimeFormat.parse(rhs.measuredAt) ?? .distantPast
             if leftDate != rightDate { return leftDate > rightDate }
@@ -96,9 +96,9 @@ enum EnergyCalculator {
             result.method = "步行回退估算，可能遗漏其他活动"
         }
         if let resting = result.resting, let active = result.active { result.expenditure = resting + active }
-        else if let basal, result.isFinished {
+        else if let basal {
             result.expenditure = basal * elapsed / 86400 * profile.activityFactor
-            result.method = "活动系数回退估算"
+            result.method = "按身体参数和活动水平估算至当前时间"
         }
         if let basal { result.forecast = basal * window.duration / 86400 * profile.activityFactor }
         let meals = valid.filter { $0.kind == "meal" }.compactMap { $0.decode(MealEntry.self) }
@@ -127,7 +127,8 @@ enum EnergyCalculator {
         let routine = status?.routineMeals ?? profile.routineMeals
         result.missingMeals = routine.filter { !confirmed.contains($0) }
         result.missingNutrients = missing.sorted()
-        result.intake = knownEnergy ? NSDecimalNumber(decimal: intake).doubleValue : nil
+        // 未记录时显示已记录摄入为零；已确认但热量未知的食物仍保留未知状态。
+        result.intake = knownEnergy || !missing.contains("热量") ? NSDecimalNumber(decimal: intake).doubleValue : nil
         result.protein = confirmed.isEmpty || missing.contains("蛋白质") ? nil : proteinTotal
         result.carbs = confirmed.isEmpty || missing.contains("碳水") ? nil : carbsTotal
         result.fat = confirmed.isEmpty || missing.contains("脂肪") ? nil : fatTotal

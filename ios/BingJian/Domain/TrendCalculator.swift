@@ -38,7 +38,9 @@ enum TrendCalculator {
             default:
                 let summary = EnergyCalculator.summary(records: index.forSummary(day: day), day: day)
                 switch metric {
-                case "intake": value = summary.intake
+                case "intake":
+                    // 图表不把没有餐食记录的日期画成零摄入。
+                    value = records.contains { $0.kind == "meal" && $0.payload.text("status") != "draft" } ? summary.intake : nil
                 case "expenditure": value = summary.expenditure
                 case "deficit": value = summary.deficit
                 default: value = records.contains { $0.kind == "meal" || $0.kind == "daily_status" } ? Double(summary.completenessScore) : nil

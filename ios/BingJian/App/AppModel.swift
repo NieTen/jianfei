@@ -30,6 +30,8 @@ final class AppModel: ObservableObject {
     @Published var challenges: [JSONObject] = []
     @Published var capabilities: JSONObject = [:]
     @Published var deletionPending = false
+    @Published private(set) var hasLoadedRecords = false
+    @Published private(set) var profileSetupCompleted = false
     @Published var setupCompleted = UserDefaults.standard.object(forKey: "setup_completed") as? Bool
         ?? !(UserDefaults.standard.string(forKey: "server_url") ?? "").isEmpty
     @Published var aiConfiguration = AIConfiguration()
@@ -58,6 +60,7 @@ final class AppModel: ObservableObject {
     private var syncEngine: SyncEngine?
     private var networkMonitor: NWPathMonitor?
     private var namespace: String
+    private var profileSetupNamespace: String?
     private var refreshTask: Task<Void, Never>?
     private var clockTask: Task<Void, Never>?
     private var syncOperation: Task<SyncReport, Error>?
@@ -124,8 +127,7 @@ final class AppModel: ObservableObject {
     var displayDate: Date { TimeFormat.window(day, timezone: profile.timezone)?.start ?? selectedDate }
     var entryDate: Date {
         if followingToday { return Date() }
-        let start = TimeFormat.window(day, timezone: profile.timezone, startMinutes: profile.dayStartMinutes)?.start ?? selectedDate
-        return min(Date(), start.addingTimeInterval(12 * 3600))
+        return RecordDate.timestamp(for: day, profile: profile)
     }
     var summary: DailySummary { selectedSummary.day == day ? selectedSummary : DailySummary(day: day) }
     var goal: GoalEntry { recordIndex.goal }
@@ -199,6 +201,13 @@ final class AppModel: ObservableObject {
             records = rows
             recordIndex = prepared
             activeProfile = prepared.currentProfile()
+            if profileSetupNamespace != namespace {
+                profileSetupNamespace = namespace
+                let today = TimeFormat.day(timezone: activeProfile.timezone, startMinutes: activeProfile.dayStartMinutes)
+                profileSetupCompleted = UserDefaults.standard.bool(forKey: "body_setup_completed:" + namespace)
+                    || OnboardingInput.isComplete(profile: activeProfile, weight: EnergyCalculator.weight(prepared.forSummary(day: today), day: today))
+            }
+            hasLoadedRecords = true
             // 只迁移一次旧版档案单位；后续同步、换账号都不覆盖本机选择。
             if UserDefaults.standard.string(forKey: Self.weightUnitPreferenceKey) == nil, !prepared.profiles.isEmpty {
                 setWeightUnit(WeightUnit(rawValue: activeProfile.weightUnit) ?? .kg)
@@ -295,6 +304,9 @@ final class AppModel: ObservableObject {
         var record = try existing ?? AppRecord(kind: "weight",
             day: TimeFormat.day(TimeFormat.parse(value.measuredAt) ?? Date(), timezone: profile.timezone, startMinutes: profile.dayStartMinutes), value: value)
         record.payload = try Codec.object(value)
+        if value.source != "healthkit", let date = TimeFormat.parse(value.measuredAt) {
+            record.businessDate = TimeFormat.day(date, timezone: profile.timezone, startMinutes: profile.dayStartMinutes)
+        }
         try await saveRecord(record)
     }
 
@@ -656,6 +668,25 @@ final class AppModel: ObservableObject {
         }
         setupCompleted = true
         UserDefaults.standard.set(true, forKey: "setup_completed")
+    }
+
+    func finishOnboarding(_ input: OnboardingInput, profileId: String, weightId: String, offline: Bool) async throws {
+        let value = try input.profile(basedOn: profile)
+        if !offline && !serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            try await saveServerAddress(serverURL)
+        }
+        let now = Date()
+        let day = TimeFormat.day(now, timezone: value.timezone, startMinutes: value.dayStartMinutes)
+        let body = try AppRecord(kind: "profile", day: day, value: value, id: profileId)
+        let weight = WeightEntry(measuredAt: TimeFormat.iso(now), weightKg: input.unit.kilograms(from: input.weight!))
+        let measurement = try AppRecord(kind: "weight", day: day, value: weight, id: weightId)
+        try await requireStore().save([body, measurement], deviceId: deviceId)
+        setWeightUnit(input.unit)
+        UserDefaults.standard.set(true, forKey: "body_setup_completed:" + namespace)
+        profileSetupCompleted = true
+        try await completeSetup(offline: true)
+        await reload()
+        scheduleSync()
     }
 
     func aiAPIKey() -> String {

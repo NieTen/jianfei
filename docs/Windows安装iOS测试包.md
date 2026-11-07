@@ -4,7 +4,7 @@
 
 项目已提供自动运行、也可手动触发的 GitHub Actions 工作流，位置为 .github/workflows/ios-test-package.yml。推送到 main 或提交目标为 main 的合并请求时，客户端相关文件发生变化就会自动构建；纯文档变更会跳过。
 
-0.1.6 支持无需系统密钥注册，并修正待签名包中 HealthKit 授权声明的保留方式，保留本机统一体重单位、HTTP 后台连接、AI 凭据保存修复，以及深色模式和系统大字体。工作流生成两种独立产物：BingJian-unsigned.ipa 用于手机重签名安装，BingJian-simulator.zip 用于 iOS 模拟器。测试包保存在本机 build/iOS测试包-0.1.6，网页测试包为 build/网页测试包/BingJian-0.1.6-Appetize.zip。页面截图及校验结果见《测试与验收.md》。手机安装仍需使用 Apple 账号签名，真机运行尚待验证。
+0.1.7 调整体重日期与单位输入、简化记餐、拍照后自动识别、首次身体信息引导，并同时显示体重与摄入图表。无密钥注册、HealthKit 签名声明、HTTP 后台和 AI 凭据保存继续保留。工作流生成两种独立产物：BingJian-unsigned.ipa 用于手机重签名安装，BingJian-simulator.zip 用于 iOS 模拟器。测试包保存在本机 build/iOS测试包-0.1.7，网页测试包为 build/网页测试包/BingJian-0.1.7-Appetize.zip。页面截图及校验结果见《测试与验收.md》。手机安装仍需使用 Apple 账号签名，真机运行尚待验证。
 
 ## 准备 GitHub 仓库
 
@@ -36,7 +36,7 @@ Appetize 要求压缩的 iOS 模拟器 .app，不能上传真机 IPA。本项目
 
 旧 0.1.1 模拟器包关闭了代码签名，缺少钥匙串所需的应用身份和访问组授权。它可能正常读取模型、通过连接测试，但在“保存 AI 设置”时报“安全凭据保存失败”。
 
-请将最新的 BingJian-0.1.6-Appetize.zip 上传为新构建，在 Appetize 中选择新构建启动，再填写 AI 设置并保存。无需解压 ZIP，也无需开启手机开发者模式。0.1.2 起的模拟器包使用临时签名并携带专用授权，密钥仍写入系统钥匙串。
+请将最新的 BingJian-0.1.7-Appetize.zip 上传为新构建，在 Appetize 中选择新构建启动，再填写 AI 设置并保存。无需解压 ZIP，也无需开启手机开发者模式。0.1.2 起的模拟器包使用临时签名并携带专用授权，密钥仍写入系统钥匙串。
 
 ### 使用 HTTP 后台
 
@@ -61,7 +61,7 @@ Sideloadly 官方说明，普通免费账号签名有效期为七天，支持在
 
 `missing com.apple.developer.healthkit entitlement` 表示当前安装包的签名缺少 HealthKit 权限声明，不能靠反复点健康权限按钮解决。之前的待签名 IPA 没有原始签名授权信息；0.1.6 会先对 iPhone 和 Watch 加入携带 HealthKit 声明的临时签名，方便重签名工具读取。临时签名不是可用于真机安装的个人签名，也不代表已获得 Apple 的健康数据访问授权。
 
-用原 Apple 账号和原 Bundle ID，在 Sideloadly 中对 0.1.6 IPA 重新签名并覆盖安装，再到 App 请求健康权限。最终签名和描述文件都必须保留 `com.apple.developer.healthkit = true`。普通 Apple Developer 账号在 Apple 的能力表中支持 HealthKit，但具体重签名工具仍须正确申请并保留该能力。[Apple 能力表](https://developer.apple.com/help/account/reference/supported-capabilities-ios) [Apple 健康授权说明](https://developer.apple.com/documentation/healthkit/authorizing-access-to-health-data)
+用原 Apple 账号和原 Bundle ID，在 Sideloadly 中对新版 IPA 重新签名并覆盖安装，再到 App 请求健康权限。最终签名和描述文件都必须保留 `com.apple.developer.healthkit = true`。普通 Apple Developer 账号在 Apple 的能力表中支持 HealthKit，但具体重签名工具仍须正确申请并保留该能力。[Apple 能力表](https://developer.apple.com/help/account/reference/supported-capabilities-ios) [Apple 健康授权说明](https://developer.apple.com/documentation/healthkit/authorizing-access-to-health-data)
 
 若重签后仍报同样的错误，可对工具导出的最终 IPA 执行：
 
