@@ -138,6 +138,7 @@ struct MealEditorView: View {
         }
         .navigationTitle(existing == nil ? "记一餐" : "编辑餐次")
         .navigationBarTitleDisplayMode(.inline)
+        .modifier(KeyboardDismissToolbar())
         .scrollDismissesKeyboard(.interactively)
         .task {
             guard !initializedDate else { return }

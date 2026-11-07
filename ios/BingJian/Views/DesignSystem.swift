@@ -1,6 +1,21 @@
 import SwiftUI
 import UIKit
 
+struct KeyboardDismissToolbar: ViewModifier {
+    func body(content: Content) -> some View {
+        content.toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("收起键盘") {
+                    // 数字键盘没有回车键，提供明确的收起入口，方便查看下一项。
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }.accessibilityIdentifier("keyboard.dismiss")
+            }
+        }
+    }
+}
+import UIKit
+
 enum Palette {
     static let teal = adaptive(light: 0x176B5A, dark: 0x8DD4BB)
     static let sage = adaptive(light: 0x6E927F, dark: 0xA5C9B8)

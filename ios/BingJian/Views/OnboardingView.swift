@@ -38,6 +38,7 @@ struct OnboardingView: View {
                             }.buttonStyle(FilledActionStyle()).padding(20).background(Palette.canvas)
                         }
                         .background(Palette.canvas).navigationTitle("欢迎使用并肩").navigationBarTitleDisplayMode(.inline)
+                        .modifier(KeyboardDismissToolbar())
                         .toolbar {
                             if step > 0 { ToolbarItem(placement: .navigationBarLeading) { Button("上一步") { step -= 1 } } }
                         }

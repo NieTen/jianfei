@@ -45,6 +45,7 @@ struct TrendSummaryChart: View {
                     }
                 }
                 .chartForegroundStyleScale(["每日体重": Palette.teal, "7 日均线": Palette.sage])
+                .chartLegend(intake ? .hidden : .automatic)
                 .chartYScale(domain: .automatic(includesZero: intake))
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 4)) { AxisValueLabel(format: .dateTime.month().day()) }

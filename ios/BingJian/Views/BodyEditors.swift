@@ -28,9 +28,15 @@ struct WeightEditorView: View {
                 Text("自动带入上次体重；切换日期后请重新填写。当天显示最后一次测量。")
                     .font(.caption).foregroundStyle(.secondary)
                 DisclosureGroup("记录时间与备注（可选）") {
-                    DatePicker("测量时间", selection: $measuredAt, in: ...Date())
+                    DatePicker("测量时刻", selection: Binding(get: { measuredAt }, set: { value in
+                        measuredAt = value
+                        let day = TimeFormat.day(value, timezone: model.profile.timezone, startMinutes: model.profile.dayStartMinutes)
+                        selectedDay = TimeFormat.window(day, timezone: model.profile.timezone)?.start ?? value
+                        amount = nil
+                    }), in: ...Date(), displayedComponents: .hourAndMinute)
+                        .environment(\.timeZone, TimeZone(identifier: model.profile.timezone) ?? .current)
                         .disabled(existing?.decode(WeightEntry.self)?.source == "healthkit")
-                    Text("默认使用当前时间，补记过去的测量时可以修改。").font(.caption).foregroundStyle(.secondary)
+                    Text("默认使用当前时刻，调整后请重新填写重量。").font(.caption).foregroundStyle(.secondary)
                     TextField("测量备注", text: $note, axis: .vertical)
                 }
             }
@@ -39,6 +45,7 @@ struct WeightEditorView: View {
             }
         }
         .navigationTitle("记录体重")
+        .modifier(KeyboardDismissToolbar())
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) { Button(saving ? "保存中" : "保存") { Task { await save() } }.disabled(saving) }
