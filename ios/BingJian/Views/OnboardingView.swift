@@ -20,13 +20,14 @@ struct OnboardingView: View {
             } else {
                 NavigationStack {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 24) {
-                            HStack { BrandMark(); Spacer(); Text("第 \(step + 1) 步，共 3 步").font(.subheadline).foregroundStyle(Palette.secondary) }
+                        VStack(alignment: .leading, spacing: 18) {
+                            HStack { BrandMark(); Spacer(); StatusPill(title: "第 \(step + 1) 步，共 3 步", symbol: "leaf") }
                             ProgressView(value: Double(step + 1), total: 3).tint(Palette.teal)
                             PageHeading(title: step == 0 ? "先认识一下你" : "平时活动多吗？",
-                                        subtitle: step == 0 ? "填写身体信息，用来估算每天的热量消耗。之后可以在“我的”中修改。" : "没有健康数据时，按你的活动水平估算消耗。")
+                                        subtitle: step == 0 ? "填写身体信息，用来估算每天的热量消耗。之后可以在“我的”中修改。" : "没有健康数据时，按你的活动水平估算消耗。",
+                                        artwork: step == 0 ? .profile : .sunrise)
                             if step == 0 { bodyInformation } else { activityInformation }
-                        }.padding(20)
+                        }.padding(16)
                     }.scrollDismissesKeyboard(.interactively)
                         .safeAreaInset(edge: .bottom) {
                             Button("继续") {
@@ -109,8 +110,11 @@ struct OnboardingView: View {
                             Spacer()
                             Image(systemName: input.activityFactor == factor ? "checkmark.circle.fill" : "circle")
                                 .foregroundStyle(Palette.teal)
-                        }.frame(minHeight: 54).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
+                        }.padding(12).frame(minHeight: 60)
+                            .background(input.activityFactor == factor ? Palette.soft : Palette.canvas,
+                                        in: RoundedRectangle(cornerRadius: 16))
+                            .contentShape(RoundedRectangle(cornerRadius: 16))
+                    }.buttonStyle(.plain).accessibilityAddTraits(input.activityFactor == factor ? .isSelected : [])
                 }
             }
             Surface {
@@ -139,14 +143,14 @@ struct ConnectionSetupView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 18) {
                     HStack {
                         BrandMark()
                         Spacer()
                         StatusPill(title: "支持离线记录", symbol: "iphone")
                     }
                     PageHeading(title: "最后，连接你的服务",
-                                subtitle: "第 3 步，共 3 步。后台与 AI 可稍后配置；身体信息会保存在本机。")
+                                subtitle: "第 3 步，共 3 步。后台与 AI 可稍后配置；身体信息会保存在本机。", artwork: .connection)
                     Surface {
                         HStack(spacing: 12) {
                             SymbolBadge(symbol: "externaldrive")
@@ -155,10 +159,10 @@ struct ConnectionSetupView: View {
                                 Text("用于同步记录与伙伴共享").font(.caption).foregroundStyle(Palette.secondary)
                             }
                         }
-                        TextField("http://192.168.1.10:8080", text: $model.serverURL)
-                            .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .padding(14).background(Palette.canvas, in: RoundedRectangle(cornerRadius: 13))
-                            .accessibilityLabel("后台地址")
+                        FormField(title: "后台地址") {
+                            TextField("http://192.168.50.186:18080", text: $model.serverURL)
+                                .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        }
                         Button("测试并保存地址") {
                             Task {
                                 checking = true
@@ -166,7 +170,7 @@ struct ConnectionSetupView: View {
                                 do { try await model.checkConnection() }
                                 catch { message = error.localizedDescription }
                             }
-                        }.frame(minHeight: 44).disabled(checking || model.serverURL.isEmpty)
+                        }.buttonStyle(SoftActionStyle()).disabled(checking || model.serverURL.isEmpty)
                         if checking { ProgressView() }
                         NavigationLink("登录或创建后台账号") { ConnectionSettingsView() }.frame(minHeight: 44, alignment: .leading)
                         NavigationLink("使用部署者的配对信息") { ServerPairingView() }.frame(minHeight: 44, alignment: .leading)
@@ -174,7 +178,7 @@ struct ConnectionSetupView: View {
                     }
                     Surface {
                         HStack(spacing: 12) {
-                            SymbolBadge(symbol: "viewfinder")
+                            SymbolBadge(symbol: "sparkles", color: Palette.purple)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("让记录轻松一点").font(.headline).foregroundStyle(Palette.ink)
                                 Text("配置 AI 接口与模型").font(.caption).foregroundStyle(Palette.secondary)
@@ -190,7 +194,7 @@ struct ConnectionSetupView: View {
                         NavigationLink("设置 AI 地址、密钥和模型") { AIConnectionEditorView() }.frame(minHeight: 44, alignment: .leading)
                         HintLabel(text: "也可以先使用本机识别或手动记录，之后再配置 AI。")
                     }
-                }.padding(20)
+                }.padding(16)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 6) {

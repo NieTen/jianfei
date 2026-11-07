@@ -11,9 +11,13 @@ struct ServerPairingView: View {
     @State private var error: String?
 
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "确认你的服务器", subtitle: "扫描配对信息或手动填写，核对后再连接。", symbol: "checkmark.shield", color: Palette.teal)
             Section("部署者提供的配对信息") {
                 TextEditor(text: $text).font(.system(.caption, design: .monospaced)).frame(minHeight: 140)
+                    .scrollContentBackground(.hidden).padding(10)
+                    .background(Palette.canvas, in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityLabel("部署者提供的配对信息")
                 Button("解析并核对") {
                     do { pairing = try ServerPairing.parse(text) }
                     catch { self.error = error.localizedDescription }
@@ -39,7 +43,7 @@ struct ServerPairingView: View {
                                 dismiss()
                             } catch { self.error = error.localizedDescription }
                         }
-                    }.disabled(busy)
+                    }.buttonStyle(FilledActionStyle()).disabled(busy)
                     if busy { ProgressView() }
                 }
             }

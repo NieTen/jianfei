@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum HeaderArtworkKind {
-    case sunrise, food, trend, meal, weight
+    case sunrise, food, trend, meal, weight, people, profile, health, connection
 }
 
 struct HeaderArtwork: View {
@@ -69,6 +69,33 @@ struct HeaderArtwork: View {
                     Capsule().fill(Palette.purple.opacity(0.25)).frame(width: 13, height: 29)
                 }.offset(y: 20)
             }.rotationEffect(.degrees(5))
+        case .people:
+            ZStack {
+                Circle().fill(Palette.soft).frame(width: 86).offset(x: 8, y: 5)
+                Image(systemName: "person.fill").font(.system(size: 57)).foregroundStyle(Palette.sage.gradient).offset(x: -19, y: 5)
+                Image(systemName: "person.fill").font(.system(size: 64)).foregroundStyle(Palette.teal.gradient).offset(x: 15, y: 12)
+                Image(systemName: "heart.fill").font(.system(size: 23)).foregroundStyle(Palette.peach.gradient).rotationEffect(.degrees(12)).offset(x: 17, y: -31)
+            }
+        case .profile:
+            ZStack {
+                RoundedRectangle(cornerRadius: 24).fill(Palette.soft.gradient).frame(width: 76, height: 84).rotationEffect(.degrees(9))
+                Image(systemName: "person.crop.circle.fill").font(.system(size: 58)).foregroundStyle(Palette.teal.gradient).offset(x: -3, y: -4)
+                Image(systemName: "leaf.fill").font(.system(size: 28)).foregroundStyle(Palette.sage.gradient).rotationEffect(.degrees(-24)).offset(x: 27, y: 26)
+            }
+        case .health:
+            ZStack {
+                Circle().fill(Palette.warm).frame(width: 84)
+                Image(systemName: "heart.fill").font(.system(size: 66)).foregroundStyle(Palette.peach.gradient)
+                Image(systemName: "waveform.path.ecg").font(.system(size: 40, weight: .medium)).foregroundStyle(.white)
+                Image(systemName: "leaf.fill").font(.system(size: 24)).foregroundStyle(Palette.teal.gradient).offset(x: 28, y: -32)
+            }
+        case .connection:
+            ZStack {
+                RoundedRectangle(cornerRadius: 24).fill(Palette.soft.gradient).frame(width: 83, height: 83).rotationEffect(.degrees(-8))
+                Image(systemName: "externaldrive.fill").font(.system(size: 55)).foregroundStyle(Palette.teal.gradient).offset(y: 10)
+                Image(systemName: "wifi").font(.system(size: 30, weight: .semibold)).foregroundStyle(Palette.sage).offset(y: -29)
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 26)).foregroundStyle(Palette.teal, Palette.card).offset(x: 29, y: 30)
+            }
         }
     }
 }

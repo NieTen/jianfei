@@ -13,12 +13,17 @@ struct AIConnectionEditorView: View {
     @State private var error: String?
 
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "让每一餐更好记", subtitle: "保存接口与模型后，下次识别会自动使用。", symbol: "sparkles", color: Palette.purple)
             Section("Responses API 接口") {
-                TextField("https://api.openai.com/v1", text: $configuration.baseUrl)
-                    .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                SecureField(model.aiHasServerKey && apiKey.isEmpty ? "后台已保存密钥，留空保持" : "API Key", text: $apiKey)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                FormField(title: "接口地址") {
+                    TextField("https://api.openai.com/v1", text: $configuration.baseUrl)
+                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
+                FormField(title: "API 密钥") {
+                    SecureField(model.aiHasServerKey && apiKey.isEmpty ? "后台已保存密钥，留空保持" : "API Key", text: $apiKey)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
                 Picker("调用方式", selection: $configuration.execution) {
                     Text("通过私有后台").tag("gateway")
                     Text("由 iPhone 直连").tag("direct")
@@ -36,8 +41,10 @@ struct AIConnectionEditorView: View {
                         ForEach(models) { value in Text(value.name).tag(value.id) }
                     }
                 }
-                TextField("模型标识，也可手动填写", text: $configuration.model)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                FormField(title: "模型标识") {
+                    TextField("选择模型或手动填写", text: $configuration.model)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
                 Button("读取可用模型列表") {
                     Task {
                         loading = true
@@ -74,7 +81,7 @@ struct AIConnectionEditorView: View {
                         catch { self.error = error.localizedDescription }
                     }
                 }.disabled(loading)
-                Button("保存 AI 设置") { Task { await save() } }.disabled(loading)
+                Button("保存 AI 设置") { Task { await save() } }.buttonStyle(FilledActionStyle()).disabled(loading)
                 if loading { ProgressView() }
                 if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
                 if model.aiConfigurationPending { Text("本机设置已保存，等待连接后台后同步").font(.caption).foregroundStyle(.secondary) }

@@ -14,11 +14,11 @@ struct CommunityView: View {
     @State private var join = false
     var body: some View {
         ScrollView {
-            VStack(spacing: 22) {
-                PageHeading(title: "一起记录，彼此鼓励", subtitle: "各自努力，也为对方的小进步高兴。")
+            VStack(spacing: 18) {
+                PageHeading(title: "一起记录，彼此鼓励", subtitle: "各自努力，也为对方的小进步高兴。", artwork: .people)
                 Surface {
                     HStack(alignment: .top, spacing: 20) {
-                        BrandMark().padding(12).background(Palette.soft, in: RoundedRectangle(cornerRadius: 20))
+                        SymbolBadge(symbol: "person.2.fill", color: Palette.teal)
                         VStack(alignment: .leading, spacing: 7) {
                             Text("找到你的记录伙伴").font(.system(.title3, design: .rounded).weight(.semibold)).foregroundStyle(Palette.ink)
                             Text("双人或最多八人的小组，按授权分享进度。").font(.subheadline).foregroundStyle(Palette.secondary)
@@ -28,7 +28,7 @@ struct CommunityView: View {
                     Button { join = true } label: {
                         Label("已有邀请码，加入挑战", systemImage: "ticket").font(.subheadline.weight(.medium))
                             .frame(maxWidth: .infinity, minHeight: 44)
-                    }.disabled(model.session == nil)
+                    }.buttonStyle(SoftActionStyle()).disabled(model.session == nil)
                     if model.session == nil {
                         Divider()
                         NavigationLink { ConnectionSettingsView() } label: {
@@ -56,11 +56,12 @@ struct CommunityView: View {
                 if model.challenges.isEmpty {
                     EmptyRecordsView(title: "还没有挑战", message: "双方分别确认规则和共享范围后，挑战才会开始。", symbol: "person.2.circle")
                 }
-            }.padding(20)
+            }.padding(16)
         }
         .background(Palette.canvas)
-        .navigationTitle("伙伴")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .topBarLeading) { Text("伙伴").font(.title3.bold()).foregroundStyle(Palette.ink) } }
         .task {
             if model.session != nil { try? await model.refreshChallenges() }
             if UserDefaults.standard.string(forKey: "pending_invite") != nil { join = true }
@@ -88,9 +89,10 @@ struct CreateChallengeView: View {
     @State private var busy = false
 
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "一起迈出一小步", subtitle: "选择周期和记录项目，邀请伙伴一起坚持。", symbol: "person.2", color: Palette.teal)
             Section("挑战设置") {
-                TextField("挑战名称", text: $title)
+                FormField(title: "挑战名称") { TextField("挑战名称", text: $title) }
                 Stepper("成员 \(members) 人", value: $members, in: 2...8)
                 Stepper("周期 \(duration) 天", value: $duration, in: 1...365)
                 LabeledContent("统计时区", value: model.profile.timezone)
@@ -107,7 +109,7 @@ struct CreateChallengeView: View {
                 LabeledContent("步数目标", value: "\(model.goal.stepGoal) 步")
                 Text("挑战开始后冻结本次目标快照。修改个人目标可用于后续挑战。").font(.caption).foregroundStyle(.secondary)
             }
-            Button("创建并生成邀请") { Task { await create() } }.disabled(busy || selected.isEmpty)
+            Button("创建并生成邀请") { Task { await create() } }.buttonStyle(FilledActionStyle()).disabled(busy || selected.isEmpty)
         }
         .navigationTitle("创建挑战")
         .toolbar { Button("关闭") { dismiss() } }
@@ -145,9 +147,10 @@ struct JoinChallengeView: View {
     @State private var preview: JSONObject = [:]
 
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "和伙伴一起开始", subtitle: "先查看邀请，再确认规则与共享范围。", symbol: "ticket", color: Palette.peach)
             Section("邀请") {
-                TextField("粘贴邀请码", text: $code).textInputAutocapitalization(.never).autocorrectionDisabled()
+                FormField(title: "邀请码") { TextField("粘贴邀请码", text: $code).textInputAutocapitalization(.never).autocorrectionDisabled() }
                 Button("拍摄邀请二维码", systemImage: "qrcode.viewfinder") { showCamera = true }
                 Button("查看邀请概要") {
                     model.perform {
@@ -175,7 +178,7 @@ struct JoinChallengeView: View {
                         dismiss()
                     } catch { message = error.localizedDescription }
                 }
-            }.disabled(code.isEmpty || preview.isEmpty)
+            }.buttonStyle(FilledActionStyle()).disabled(code.isEmpty || preview.isEmpty)
         }
         .navigationTitle("加入挑战")
         .onChange(of: code) { _, _ in preview = [:] }
@@ -212,17 +215,27 @@ struct InvitationView: View {
         return value.string ?? code
     }
     var body: some View {
-        VStack(spacing: 24) {
-            Text("邀请伙伴一起记录").font(.title2.weight(.semibold))
-            if let image = qrImage {
-                Image(uiImage: image).interpolation(.none).resizable().scaledToFit().frame(width: 240, height: 240).padding(20).background(.white, in: RoundedRectangle(cornerRadius: 20))
+        ScrollView {
+            VStack(spacing: 18) {
+                PageHeading(title: "好习惯，一起养成", subtitle: "把邀请发给伙伴，开始共同记录。", artwork: .people)
+                Surface {
+                    if let image = qrImage {
+                        Image(uiImage: image).interpolation(.none).resizable().scaledToFit()
+                            .frame(maxWidth: 220).padding(18)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 20))
+                            .frame(maxWidth: .infinity).accessibilityLabel("邀请二维码")
+                    }
+                    Text("邀请码").font(.caption).foregroundStyle(Palette.secondary)
+                    Text(code).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                        .padding(14).frame(maxWidth: .infinity).background(Palette.soft, in: RoundedRectangle(cornerRadius: 14))
+                    ShareLink(item: link) { Label("分享邀请", systemImage: "square.and.arrow.up") }.buttonStyle(FilledActionStyle())
+                    Button("复制邀请码") { UIPasteboard.general.string = code }.buttonStyle(SoftActionStyle())
+                    HintLabel(text: "24 小时内有效，仅可使用一次", systemImage: "clock")
+                }
             }
-            Text(code).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
-            ShareLink(item: link) { Label("分享邀请", systemImage: "square.and.arrow.up") }.buttonStyle(.borderedProminent)
-            Button("复制邀请码") { UIPasteboard.general.string = code }
-            Text("24 小时内有效，仅可使用一次").font(.caption).foregroundStyle(.secondary)
-        }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity).background(Palette.canvas)
-            .navigationTitle("邀请").toolbar { Button("完成") { dismiss() } }
+            .padding(16)
+        }.background(Palette.canvas)
+            .navigationTitle("邀请").navigationBarTitleDisplayMode(.inline).toolbar { Button("完成") { dismiss() } }
     }
     private var qrImage: UIImage? {
         let filter = CIFilter.qrCodeGenerator()
@@ -250,11 +263,11 @@ struct ChallengeDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
+                PageHeading(title: challenge.text("title", fallback: "一起好好记录"), subtitle: "分享每一次坚持，也为伙伴送上鼓励。", artwork: .people)
                 DateStrip()
                 if !information.isEmpty { HintLabel(text: information, systemImage: offline ? "wifi.slash" : "info.circle") }
                 Surface {
-                    Text(challenge.text("title", fallback: "挑战")).font(.title2.weight(.semibold))
-                    Text(challengeStatus(challenge.text("status"))).font(.subheadline).foregroundStyle(Palette.teal)
+                    StatusPill(title: challengeStatus(challenge.text("status")), symbol: "flag")
                     Text("\(challenge.text("timezone")) · 日界线 \(Int(challenge.number("day_start_minutes") ?? 0) / 60):00 · \(Int(challenge.number("duration_days") ?? 0)) 天").font(.caption).foregroundStyle(.secondary)
                     if challenge.text("status") == "pending" {
                         Button("确认当前规则与个人目标") {
@@ -266,7 +279,7 @@ struct ChallengeDetailView: View {
                                 _ = try await model.api.send("challenges/\(challengeId)/confirm", method: "POST",
                                     body: ["version": .number(challenge.number("version") ?? 1)])
                             }
-                        }.buttonStyle(.borderedProminent)
+                        }.buttonStyle(FilledActionStyle())
                         Button("生成下一位成员的邀请") {
                             perform {
                                 let value = try await model.api.send("challenges/\(challengeId)/invite", method: "POST", body: [:])
@@ -341,14 +354,14 @@ struct ChallengeDetailView: View {
                             }
                         }
                     }
-                    TextField("写给伙伴，最多 200 字", text: $text, axis: .vertical)
+                    FormField(title: "给伙伴的话") { TextField("写给伙伴，最多 200 字", text: $text, axis: .vertical) }
                     Button("发送鼓励") {
                         model.perform {
                             try await model.queueCommand(path: "challenges/\(challengeId)/encouragements",
                                 body: ["id": .string(UUID().uuidString.lowercased()), "message": .string(String(text.prefix(200)))])
                             text = ""
                         }
-                    }.disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }.buttonStyle(FilledActionStyle()).disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     ForEach(messages.indices, id: \.self) { index in
                         let message = messages[index]
                         VStack(alignment: .leading, spacing: 4) {
@@ -383,7 +396,7 @@ struct ChallengeDetailView: View {
                         }
                     }
                 }
-            }.padding(20)
+            }.padding(16)
         }
         .background(Palette.canvas).navigationTitle("共同记录").navigationBarTitleDisplayMode(.inline)
         .task { await load() }.refreshable { await load() }
@@ -465,16 +478,26 @@ struct PartnerHistoryView: View {
     @State private var message = ""
     var body: some View {
         ScrollView {
-            Surface {
-                Text("近 30 日已授权测量").font(.headline)
-                Text("体重单位：\(model.weightUnit.name)").font(.caption).foregroundStyle(.secondary)
-                if loading { ProgressView() }
-                Chart(points) {
-                    PointMark(x: .value("日期", $0.date), y: .value("体重 \(model.weightUnit.name)", model.weightUnit.fromKilograms($0.value))).foregroundStyle(Palette.teal)
-                }.chartYScale(domain: .automatic(includesZero: false)).frame(height: 260)
-                Text(message.isEmpty ? "仅绘制有测量且在授权范围内的日期" : message).font(.caption).foregroundStyle(.secondary)
-            }.padding(20)
-        }.background(Palette.canvas).navigationTitle("伙伴体重趋势")
+            VStack(spacing: 18) {
+                PageHeading(title: "看见伙伴的小变化", subtitle: "近 30 日已授权测量，按你的体重单位显示。", artwork: .trend)
+                Surface {
+                    Label("伙伴体重", systemImage: "scalemass").font(.headline).foregroundStyle(Palette.teal)
+                    Text("体重单位：\(model.weightUnit.name)").font(.caption).foregroundStyle(Palette.secondary)
+                    if loading { ProgressView() }
+                    Chart(points) {
+                        PointMark(x: .value("日期", $0.date), y: .value("体重 \(model.weightUnit.name)", model.weightUnit.fromKilograms($0.value)))
+                            .foregroundStyle(Palette.teal).symbolSize(28)
+                    }.chartYScale(domain: .automatic(includesZero: false))
+                        .chartYAxis {
+                            AxisMarks(position: .leading) { _ in
+                                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 4])).foregroundStyle(Palette.border)
+                                AxisValueLabel()
+                            }
+                        }.frame(height: 220)
+                    Text(message.isEmpty ? "仅绘制有测量且在授权范围内的日期" : message).font(.caption).foregroundStyle(Palette.secondary)
+                }
+            }.padding(16)
+        }.background(Palette.canvas).navigationTitle("伙伴体重趋势").navigationBarTitleDisplayMode(.inline)
             .task {
                 defer { loading = false }
                 do {
@@ -514,7 +537,8 @@ struct ConsentEditorView: View {
     }
 
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "分享多少，由你决定", subtitle: "只向伙伴展示你明确选择的内容。", symbol: "hand.raised", color: Palette.purple)
             Section("共享对象") {
                 Picker("成员", selection: $recipient) {
                     ForEach(recipients.indices, id: \.self) { index in

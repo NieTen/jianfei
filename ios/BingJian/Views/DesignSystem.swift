@@ -167,9 +167,10 @@ struct SettingsRow: View {
     var title: String
     var symbol: String
     var detail: String? = nil
+    var color: Color = Palette.teal
     var body: some View {
         HStack(spacing: 13) {
-            SymbolBadge(symbol: symbol)
+            SymbolBadge(symbol: symbol, color: color)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.subheadline.weight(.medium)).foregroundStyle(Palette.ink)
                 if let detail { Text(detail).font(.caption).foregroundStyle(Palette.secondary) }

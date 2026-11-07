@@ -4,14 +4,14 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                PageHeading(title: "我的健康日常", subtitle: "按自己的习惯，安排每一天。")
+            VStack(alignment: .leading, spacing: 18) {
+                PageHeading(title: "我的健康日常", subtitle: "按自己的习惯，安排每一天。", artwork: .profile)
                 Surface {
                     HStack(spacing: 16) {
                         Text(String((model.profile.displayName.isEmpty ? "我" : model.profile.displayName).prefix(1)))
                             .font(.system(.title, design: .rounded, weight: .medium))
-                            .foregroundStyle(Palette.teal).frame(width: 66, height: 66)
-                            .background(Palette.soft, in: RoundedRectangle(cornerRadius: 23))
+                            .foregroundStyle(.white).frame(width: 66, height: 66)
+                            .background(Palette.heroGradient, in: RoundedRectangle(cornerRadius: 23))
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 7) {
                             Text(model.profile.displayName.isEmpty ? "我的记录" : model.profile.displayName)
@@ -23,21 +23,21 @@ struct SettingsView: View {
                     }
                     Divider()
                     NavigationLink { ProfileEditorView() } label: { SettingsRow(title: "身体档案与目标", symbol: "person.text.rectangle") }
-                    NavigationLink { MeasurementEditorView() } label: { SettingsRow(title: "身体组成与围度", symbol: "figure.stand") }
+                    NavigationLink { MeasurementEditorView() } label: { SettingsRow(title: "身体组成与围度", symbol: "figure.stand", color: Palette.purple) }
                 }
                 Text("连接与数据").font(.headline).foregroundStyle(Palette.ink).padding(.horizontal, 4)
                 Surface {
                     NavigationLink { AISettingsView() } label: {
                         SettingsRow(title: "AI 与个性化估算", symbol: "sparkle",
-                                    detail: model.aiConfiguration.configured ? model.aiConfiguration.model : "设置接口与模型")
+                                    detail: model.aiConfiguration.configured ? model.aiConfiguration.model : "设置接口与模型", color: Palette.purple)
                     }
                     Divider()
                     NavigationLink { ConnectionSettingsView() } label: {
                         SettingsRow(title: "私有服务器与账号", symbol: "externaldrive", detail: "后台地址保存后自动使用")
                     }
-                    NavigationLink { HealthSettingsView() } label: { SettingsRow(title: "健康权限与历史回填", symbol: "heart") }
+                    NavigationLink { HealthSettingsView() } label: { SettingsRow(title: "健康权限与历史回填", symbol: "heart", color: Palette.peach) }
                     NavigationLink { SyncStatusView() } label: { SettingsRow(title: "同步状态与冲突", symbol: "arrow.triangle.2.circlepath") }
-                    NavigationLink { DeviceManagementView() } label: { SettingsRow(title: "设备与登录管理", symbol: "iphone.gen3") }
+                    NavigationLink { DeviceManagementView() } label: { SettingsRow(title: "设备与登录管理", symbol: "iphone.gen3", color: Palette.purple) }
                     NavigationLink { DataManagementView() } label: { SettingsRow(title: "导出、恢复与删除", symbol: "tray.and.arrow.down") }
                 }
                 Text("使用偏好").font(.headline).foregroundStyle(Palette.ink).padding(.horizontal, 4)
@@ -48,8 +48,8 @@ struct SettingsView: View {
                     Text("体重、目标、历史和伙伴数据统一换算显示，后续录入自动沿用。")
                         .font(.caption).foregroundStyle(Palette.secondary)
                     Divider()
-                    NavigationLink { ReminderSettingsView() } label: { SettingsRow(title: "提醒与通知", symbol: "bell") }
-                    NavigationLink { FavoritesManagementView() } label: { SettingsRow(title: "常用食物", symbol: "bookmark") }
+                    NavigationLink { ReminderSettingsView() } label: { SettingsRow(title: "提醒与通知", symbol: "bell", color: Palette.peach) }
+                    NavigationLink { FavoritesManagementView() } label: { SettingsRow(title: "常用食物", symbol: "bookmark", color: Palette.peach) }
                 }
                 VStack(alignment: .leading, spacing: 12) {
                     Label("记录与隐私，由你掌握", systemImage: "lock.shield").font(.subheadline.weight(.medium)).foregroundStyle(Palette.ink)
@@ -58,8 +58,9 @@ struct SettingsView: View {
                     PrivacyNote()
                     Text("并肩 · 0.1.7").font(.caption2)
                 }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 4)
-            }.padding(20).buttonStyle(.plain)
-        }.background(Palette.canvas).navigationTitle("我的").navigationBarTitleDisplayMode(.inline)
+            }.padding(16).buttonStyle(.plain)
+        }.background(Palette.canvas).navigationTitle("").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarLeading) { Text("我的").font(.title3.bold()).foregroundStyle(Palette.ink) } }
     }
 }
 
@@ -85,10 +86,13 @@ struct ConnectionSettingsView: View {
     }
 
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "连接你的记录空间", subtitle: "后台地址只需保存一次，之后可随时在这里更改。", symbol: "externaldrive", color: Palette.teal)
             Section("私有服务器") {
                 NavigationLink("核验服务身份与证书指纹") { ServerPairingView() }
-                TextField("http:// 或 https://服务器地址", text: $model.serverURL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                FormField(title: "后台地址") {
+                    TextField("http:// 或 https://服务器地址", text: $model.serverURL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
                 Button("保存后台地址") {
                     model.perform { try await model.saveServerAddress(model.serverURL); model.notice = "地址已保存，后续启动自动使用" }
                 }
@@ -114,7 +118,7 @@ struct ConnectionSettingsView: View {
                     AccountFieldsView(username: $username, password: $password, displayName: $displayName,
                                       registration: registration, errors: accountErrors).disabled(busy)
                     Toggle("将当前未绑定的离线记录关联到此账号", isOn: $mergeLocal)
-                    Button(registration ? "开户并登录" : "登录") { Task { await authenticate() } }.disabled(busy)
+                    Button(registration ? "开户并登录" : "登录") { Task { await authenticate() } }.buttonStyle(FilledActionStyle()).disabled(busy)
                     if busy { ProgressView() }
                     Button("使用恢复凭据重设密码") { recovering = true }
                 }
@@ -135,10 +139,11 @@ struct ConnectionSettingsView: View {
         .onChange(of: registration) { _, _ in submitted = false; accountErrors = [:] }
         .sheet(isPresented: $recovering) {
             NavigationStack {
-                Form {
-                    TextField("用户名", text: $username).textInputAutocapitalization(.never)
-                    SecureField("恢复凭据", text: $recoveryCode)
-                    SecureField("新密码，至少 10 位", text: $password)
+                AppForm {
+                    FormIntro(title: "找回你的记录", subtitle: "使用开户时保存的恢复凭据重设密码。", symbol: "key", color: Palette.purple)
+                    FormField(title: "用户名") { TextField("用户名", text: $username).textInputAutocapitalization(.never) }
+                    FormField(title: "恢复凭据") { SecureField("恢复凭据", text: $recoveryCode) }
+                    FormField(title: "新密码") { SecureField("至少 10 位", text: $password) }
                     Button("重设密码") {
                         Task {
                             do {
@@ -190,7 +195,8 @@ struct DeviceManagementView: View {
     @EnvironmentObject private var model: AppModel
     @State private var devices: [JSONObject] = []
     var body: some View {
-        List {
+        AppList {
+            FormIntro(title: "管理已登录的设备", subtitle: "查看设备状态，移除不再使用的登录。", symbol: "iphone.gen3", color: Palette.purple)
             Section {
                 Text("同一账号可在多台 iPhone 使用。换机登录后拉取记录，编辑冲突由你选择合并。")
                     .font(.subheadline)
@@ -226,7 +232,8 @@ struct SyncStatusView: View {
     @State private var commands: [JSONObject] = []
     @State private var failures: [JSONObject] = []
     var body: some View {
-        List {
+        AppList {
+            FormIntro(title: "让记录保持同步", subtitle: "查看同步进度，处理需要确认的记录。", symbol: "arrow.triangle.2.circlepath", color: Palette.teal)
             Section("同步") {
                 Text(model.syncStatus)
                 LabeledContent("待同步记录", value: String(model.pendingCount))
@@ -300,7 +307,8 @@ struct ConflictDetailView: View {
     @State private var mergedText = ""
     @State private var showMerge = false
     var body: some View {
-        List {
+        AppList {
+            FormIntro(title: "确认要保留的内容", subtitle: "对照本机与后台版本，再决定如何合并。", symbol: "square.stack.3d.up", color: Palette.peach)
             Section("本机版本") {
                 Text((try? Codec.json(conflict.local.payload)) ?? "").font(.system(.caption, design: .monospaced)).textSelection(.enabled)
             }
@@ -323,9 +331,11 @@ struct ConflictDetailView: View {
         }.navigationTitle("合并记录")
         .sheet(isPresented: $showMerge) {
             NavigationStack {
-                VStack {
-                    Text("编辑合并后的 JSON 字段，保存后由相同数据规则校验。").font(.caption).padding()
-                    TextEditor(text: $mergedText).font(.system(.caption, design: .monospaced))
+                AppForm {
+                    FormIntro(title: "合并记录内容", subtitle: "编辑合并后的 JSON 字段，保存时会校验数据。", symbol: "square.stack.3d.up", color: Palette.peach)
+                    Section("合并后的字段") {
+                        TextEditor(text: $mergedText).font(.system(.caption, design: .monospaced)).frame(minHeight: 300)
+                    }
                 }
                 .navigationTitle("字段合并")
                 .toolbar {

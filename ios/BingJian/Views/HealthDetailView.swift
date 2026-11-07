@@ -27,28 +27,29 @@ struct HealthDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
+                PageHeading(title: "身体的日常，也值得看见", subtitle: "活动、休息与消耗，一起了解自己的节奏。", artwork: .health)
                 DateStrip()
                 Surface {
                     Text("活动与消耗").font(.headline)
                     HStack {
-                        MetricView(title: "步数", value: health?.steps, unit: "步")
-                        MetricView(title: "活动能量", value: health?.activeKcal, unit: "kcal")
+                        MetricView(title: "步数", value: health?.steps, unit: "步", color: Palette.teal)
+                        MetricView(title: "活动能量", value: health?.activeKcal, unit: "kcal", color: Palette.peach)
                     }
                     HStack {
-                        MetricView(title: "静息能量", value: health?.restingKcal, unit: "kcal")
-                        MetricView(title: "距离", value: health?.distanceKm, unit: "km")
+                        MetricView(title: "静息能量", value: health?.restingKcal, unit: "kcal", color: Palette.teal)
+                        MetricView(title: "距离", value: health?.distanceKm, unit: "km", color: Palette.teal)
                     }
                     HintLabel(text: "运动记录用于查看类型和时长，能量已包含在活动能量中时不重复叠加。")
                 }
                 Surface {
                     Text("心率与睡眠").font(.headline)
                     HStack {
-                        MetricView(title: "平均心率", value: health?.heartRate, unit: "次/分")
-                        MetricView(title: "静息心率", value: health?.restingHeartRate, unit: "次/分")
+                        MetricView(title: "平均心率", value: health?.heartRate, unit: "次/分", color: Palette.peach)
+                        MetricView(title: "静息心率", value: health?.restingHeartRate, unit: "次/分", color: Palette.peach)
                     }
                     HStack {
-                        MetricView(title: "睡眠记录", value: health?.sleepHours, unit: "小时")
-                        MetricView(title: "近 7 日有效记录均值", value: recentSleep.isEmpty ? nil : recentSleep.reduce(0, +) / Double(recentSleep.count), unit: "小时")
+                        MetricView(title: "睡眠记录", value: health?.sleepHours, unit: "小时", color: Palette.purple)
+                        MetricView(title: "近 7 日有效记录均值", value: recentSleep.isEmpty ? nil : recentSleep.reduce(0, +) / Double(recentSleep.count), unit: "小时", color: Palette.purple)
                     }
                     Text("近 7 日有 \(recentSleep.count) 个有效睡眠记录日。重叠睡眠区间按并集合计，缺失日期不补零。")
                         .font(.caption).foregroundStyle(.secondary)
@@ -80,7 +81,7 @@ struct HealthDetailView: View {
                     NavigationLink("权限与历史回填") { HealthSettingsView() }
                 }
                 PrivacyNote()
-            }.padding(20)
+            }.padding(16)
         }.background(Palette.canvas).navigationTitle("健康数据")
     }
 }
@@ -90,7 +91,8 @@ struct HealthSettingsView: View {
     @EnvironmentObject private var health: HealthManager
     @State private var startDate = Calendar.current.date(byAdding: .month, value: -12, to: Date()) ?? Date()
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "连接身体的日常", subtitle: "管理健康数据权限，补充已有的历史记录。", symbol: "heart", color: Palette.peach)
             if let issue = health.accessIssue {
                 Section("健康数据暂不可用") {
                     Label("需要重新签名安装", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)

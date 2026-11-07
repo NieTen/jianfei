@@ -26,9 +26,10 @@ struct DataManagementView: View {
     @State private var deletionServer = ""
 
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "记录由你保管", subtitle: "导出备份、恢复记录，或管理不再需要的数据。", symbol: "tray.and.arrow.down", color: Palette.teal)
             Section("加密导出与恢复") {
-                SecureField("导出 / 导入密码，至少 10 位", text: $password)
+                FormField(title: "备份密码") { SecureField("导出 / 导入密码，至少 10 位", text: $password) }
                 Toggle("包含食物照片", isOn: $includePhotos)
                 Button("导出本机完整记录") { Task { await exportLocal() } }.disabled(busy || password.count < 10)
                 Button("选择加密恢复包") { filePicker = true }.disabled(busy || password.isEmpty)
@@ -50,7 +51,7 @@ struct DataManagementView: View {
             if !message.isEmpty { Section { Text(message).font(.subheadline) } }
             Section("清理与删除") {
                 LabeledContent("待同步记录", value: String(model.pendingCount))
-                SecureField("删除服务器数据时填写账号密码", text: $accountPassword)
+                FormField(title: "账号密码") { SecureField("删除服务器数据时填写", text: $accountPassword) }
                 Button("清除本机副本", role: .destructive) { deleteAction = "local"; confirmDelete = true }
                 Button("删除服务器全部个人数据", role: .destructive) { deleteAction = "data"; confirmDelete = true }.disabled(model.session == nil)
                 Button("注销服务器账号", role: .destructive) { deleteAction = "account"; confirmDelete = true }.disabled(model.session == nil)

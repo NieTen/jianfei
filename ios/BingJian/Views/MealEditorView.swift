@@ -44,7 +44,7 @@ struct MealEditorView: View {
     }
 
     var body: some View {
-        Form {
+        AppForm {
             Section {
                 MealTypeButtons(selection: $meal.mealType).disabled(busy)
                 Text(date.formatted(date: .abbreviated, time: .omitted))
@@ -138,7 +138,6 @@ struct MealEditorView: View {
         }
         .navigationTitle(existing == nil ? "记一餐" : "编辑餐次")
         .navigationBarTitleDisplayMode(.inline)
-        .modifier(KeyboardDismissToolbar())
         .scrollDismissesKeyboard(.interactively)
         .task {
             guard !initializedDate else { return }
@@ -411,7 +410,8 @@ struct RecognitionReviewView: View {
     }
 
     var body: some View {
-        List {
+        AppList {
+            FormIntro(title: "核对这一餐", subtitle: "检查识别结果与预计份量，再应用到记录。", symbol: "checkmark.seal", color: Palette.peach)
             Section {
                 Text(result.text("uncertainty_note", fallback: "请核对食物、份量和营养")).font(.subheadline)
                 Text("模型 \(result.text("model_name"))").font(.caption).foregroundStyle(.secondary)

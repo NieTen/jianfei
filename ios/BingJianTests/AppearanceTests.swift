@@ -27,6 +27,13 @@ final class AppearanceTests: XCTestCase {
                                   name: "\(tab)-\(mode)", dark: dark)
             }
             try await capture(OnboardingView(), model: model, name: "welcome-\(mode)", dark: dark)
+            // 二级页面与主页面一起验收，避免表单、邀请页在深色下出现样式断层。
+            try await capture(NavigationStack { ProfileEditorView() }, model: model, name: "profile-\(mode)", dark: dark)
+            try await capture(NavigationStack { AIConnectionEditorView() }, model: model, name: "ai-connection-\(mode)", dark: dark)
+            try await capture(NavigationStack { ConnectionSettingsView() }, model: model, name: "server-account-\(mode)", dark: dark)
+            try await capture(NavigationStack { CreateChallengeView() }, model: model, name: "challenge-create-\(mode)", dark: dark)
+            try await capture(NavigationStack { InvitationView(code: "preview-invitation") }, model: model, name: "invitation-\(mode)", dark: dark)
+            try await capture(NavigationStack { ReminderSettingsView() }, model: model, name: "reminders-\(mode)", dark: dark)
         }
         for tab in ["today", "meals", "trends", "settings"] {
             try await capture(MainTabs(selection: .constant(tab)), model: model,
@@ -47,7 +54,7 @@ final class AppearanceTests: XCTestCase {
         ]
         for (name, input) in accountExamples {
             try await capture(NavigationStack {
-                Form {
+                AppForm {
                     Section("创建新账号") {
                         AccountFieldsView(username: .constant(input.username), password: .constant(input.password),
                                           displayName: .constant(input.displayName),
@@ -67,6 +74,9 @@ final class AppearanceTests: XCTestCase {
         try await capture(OnboardingView(initialStep: 1), model: model, name: "welcome-activity")
         try await capture(OnboardingView(initialStep: 2), model: model, name: "welcome-connections")
         try await capture(OnboardingView(), model: model, name: "welcome-small-screen", compact: true)
+        try await capture(NavigationStack { AIConnectionEditorView() }, model: model, name: "ai-connection-large-text", largeText: true)
+        try await capture(NavigationStack { ConnectionSettingsView() }, model: model, name: "server-account-large-text", largeText: true)
+        try await capture(NavigationStack { InvitationView(code: "preview-invitation") }, model: model, name: "invitation-small-screen", compact: true)
         _ = model.health.reportFailure(NSError(domain: HKErrorDomain, code: 4,
             userInfo: [NSLocalizedDescriptionKey: "Missing com.apple.developer.healthkit entitlement."]))
         try await capture(NavigationStack { HealthSettingsView() }, model: model, name: "health-signing-help")

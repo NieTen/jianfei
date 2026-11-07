@@ -6,7 +6,8 @@ struct AISettingsView: View {
     @State private var weightMultiplier: Double = 1
     @State private var calorieMultiplier: Double = 1
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "更了解你的每一餐", subtitle: "选择识别方式，也可以保存自己的份量与热量偏好。", symbol: "sparkles", color: Palette.purple)
             Section("识别方式") {
                 NavigationLink("设置 AI 接口、密钥与模型") { AIConnectionEditorView() }
                 Picker("默认模式", selection: $model.aiMode) {
@@ -22,7 +23,7 @@ struct AISettingsView: View {
                 Text("提供方变更后应重新核对授权。照片上传默认去除 EXIF 定位及无关元数据。").font(.caption).foregroundStyle(.secondary)
             }
             Section("个人估算偏好") {
-                TextField("食物名称，匹配同名候选", text: $name)
+                FormField(title: "食物名称") { TextField("匹配同名候选", text: $name) }
                 VStack(alignment: .leading) {
                     Text("份量倍率 \(weightMultiplier.concise)")
                     Slider(value: $weightMultiplier, in: 0.25...3, step: 0.05)
@@ -59,7 +60,8 @@ struct ReminderSettingsView: View {
     @EnvironmentObject private var reminders: ReminderManager
     @State private var remote = false
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "给日常一点小提醒", subtitle: "按自己的作息设置，慢慢养成记录习惯。", symbol: "bell.badge", color: Palette.peach)
             Section("本机提醒") {
                 Toggle("启用每日提醒", isOn: $reminders.enabled)
                 hourPicker("称重提醒", selection: $reminders.weightHour)
@@ -96,7 +98,8 @@ struct FavoritesManagementView: View {
     @State private var editing: FoodItem?
     @State private var recordId: String?
     var body: some View {
-        List {
+        AppList {
+            FormIntro(title: "常吃的，下次更好记", subtitle: "收藏常用食物，记录时可以直接选用。", symbol: "bookmark", color: Palette.peach)
             ForEach(model.records.filter { $0.kind == "favorite" && $0.deletedAt == nil }) { record in
                 if let favorite = record.decode(FavoriteFood.self) {
                     Button {

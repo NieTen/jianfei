@@ -14,7 +14,7 @@ struct WeightEditorView: View {
     @State private var message: String?
 
     var body: some View {
-        Form {
+        AppForm {
             Section("体重") {
                 DatePicker("日期", selection: Binding(get: { selectedDay }, set: { value in
                     selectedDay = value
@@ -45,7 +45,6 @@ struct WeightEditorView: View {
             }
         }
         .navigationTitle("记录体重")
-        .modifier(KeyboardDismissToolbar())
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) { Button(saving ? "保存中" : "保存") { Task { await save() } }.disabled(saving) }
@@ -92,13 +91,24 @@ struct MeasurementEditorView: View {
     @State private var message: String?
     var existing: AppRecord?
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "留意身体的小变化", subtitle: "按实际测量填写，未测量的项目可以留空。", symbol: "figure.stand", color: Palette.purple)
             DatePicker("测量时间", selection: $date, in: ...Date())
-            TextField("腰围 cm", value: $value.waistCm, format: .number).keyboardType(.decimalPad)
-            TextField("臀围 cm", value: $value.hipCm, format: .number).keyboardType(.decimalPad)
-            TextField("体脂率 %", value: $value.bodyFatPercent, format: .number).keyboardType(.decimalPad)
-            TextField("肌肉量 \(unit.name)", value: $muscleAmount, format: .number).keyboardType(.decimalPad)
-            TextField("来源或测量条件", text: $value.note, axis: .vertical)
+            FormField(title: "腰围 cm") {
+                TextField("腰围 cm", value: $value.waistCm, format: .number).keyboardType(.decimalPad)
+            }
+            FormField(title: "臀围 cm") {
+                TextField("臀围 cm", value: $value.hipCm, format: .number).keyboardType(.decimalPad)
+            }
+            FormField(title: "体脂率 %") {
+                TextField("体脂率 %", value: $value.bodyFatPercent, format: .number).keyboardType(.decimalPad)
+            }
+            FormField(title: "肌肉量 \(unit.name)") {
+                TextField("肌肉量 \(unit.name)", value: $muscleAmount, format: .number).keyboardType(.decimalPad)
+            }
+            FormField(title: "来源或测量条件") {
+                TextField("来源或测量条件", text: $value.note, axis: .vertical)
+            }
         }
         .navigationTitle("身体组成与围度")
         .toolbar {
@@ -155,12 +165,15 @@ struct ProfileEditorView: View {
     @State private var message: String?
 
     var body: some View {
-        Form {
+        AppForm {
+            FormIntro(title: "你的节奏，由你设定", subtitle: "身体信息、个人目标与记录习惯，都可以在这里调整。", symbol: "person.crop.circle", color: Palette.teal)
             Section("个人档案") {
-                TextField("称呼", text: $profile.displayName)
+                FormField(title: "称呼") {
+                    TextField("称呼", text: $profile.displayName)
+                }
                 Toggle("填写出生日期", isOn: $useBirthday)
                 if useBirthday { DatePicker("生日", selection: $birthday, in: ...Date(), displayedComponents: .date) }
-                else { TextField("年龄，可留空", value: $profile.age, format: .number).keyboardType(.numberPad) }
+                else { FormField(title: "年龄") { TextField("可留空", value: $profile.age, format: .number).keyboardType(.numberPad) } }
                 Picker("代谢公式参数", selection: $profile.sexForFormula) {
                     Text("不提供").tag("unspecified")
                     Text("男性公式").tag("male")
@@ -168,11 +181,17 @@ struct ProfileEditorView: View {
                 }
                 if profile.heightUnit == "ft-in" {
                     HStack {
-                        TextField("英尺", value: $feet, format: .number)
-                        TextField("英寸", value: $inches, format: .number)
+                        FormField(title: "英尺") {
+                            TextField("英尺", value: $feet, format: .number)
+                        }
+                        FormField(title: "英寸") {
+                            TextField("英寸", value: $inches, format: .number)
+                        }
                     }.keyboardType(.decimalPad)
                 } else {
-                    TextField("身高 cm", value: $profile.heightCm, format: .number).keyboardType(.decimalPad)
+                    FormField(title: "身高 cm") {
+                        TextField("身高 cm", value: $profile.heightCm, format: .number).keyboardType(.decimalPad)
+                    }
                 }
                 Button("从健康读取可用档案") {
                     Task {
@@ -186,9 +205,13 @@ struct ProfileEditorView: View {
                 }
             }
             Section("个人目标") {
-                TextField("目标体重 \(weightUnit.name)", value: $targetWeight, format: .number).keyboardType(.decimalPad)
+                FormField(title: "目标体重 \(weightUnit.name)") {
+                    TextField("目标体重 \(weightUnit.name)", value: $targetWeight, format: .number).keyboardType(.decimalPad)
+                }
                 DatePicker("目标结束日期", selection: $endDate, in: Date()..., displayedComponents: .date)
-                TextField("每日步数目标", value: $goal.stepGoal, format: .number).keyboardType(.numberPad)
+                FormField(title: "每日步数目标") {
+                    TextField("每日步数目标", value: $goal.stepGoal, format: .number).keyboardType(.numberPad)
+                }
                 Picker("日常活动水平", selection: $profile.activityFactor) {
                     Text("久坐").tag(1.2)
                     Text("轻度活动").tag(1.375)
@@ -196,7 +219,9 @@ struct ProfileEditorView: View {
                     Text("高度活动").tag(1.725)
                     Text("极高活动").tag(1.9)
                 }
-                TextField("实测单步长度 m，可留空", value: $profile.stepLengthM, format: .number).keyboardType(.decimalPad)
+                FormField(title: "实测单步长度 m，可留空") {
+                    TextField("实测单步长度 m，可留空", value: $profile.stepLengthM, format: .number).keyboardType(.decimalPad)
+                }
                 Text("单步长度可用实测距离除以步数得到，用于缺少活动能量时的步行回退估算。").font(.caption).foregroundStyle(.secondary)
             }
             Section("常规餐次") {

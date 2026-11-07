@@ -19,9 +19,11 @@ struct FoodEditorView: View {
     }
 
     var body: some View {
-        Form {
+        AppForm {
             Section("食物") {
-                TextField("名称", text: $food.name)
+                FormField(title: "名称") {
+                    TextField("名称", text: $food.name)
+                }
                 Picker("生熟状态", selection: $food.foodState) {
                     Text("未说明").tag("unknown")
                     Text("生重").tag("raw")
@@ -39,14 +41,20 @@ struct FoodEditorView: View {
                 if food.requiresPortion == true {
                     Text("候选份量尚未确认，请核对实际数量后保存。").font(.caption).foregroundStyle(Palette.peach)
                 }
-                TextField("实际数量", value: $food.amount, format: .number).keyboardType(.decimalPad)
+                FormField(title: "实际数量") {
+                    TextField("实际数量", value: $food.amount, format: .number).keyboardType(.decimalPad)
+                }
                 Picker("当前单位", selection: $food.unit) {
                     Text("克").tag("g")
                     Text("毫升").tag("ml")
                     Text("份").tag("serving")
                 }.disabled(original.name != "")
-                TextField("每份重量 g，可选", value: $food.servingWeightG, format: .number).keyboardType(.decimalPad)
-                TextField("密度 g/ml，可选", value: $food.densityGMl, format: .number).keyboardType(.decimalPad)
+                FormField(title: "每份重量 g，可选") {
+                    TextField("每份重量 g，可选", value: $food.servingWeightG, format: .number).keyboardType(.decimalPad)
+                }
+                FormField(title: "密度 g/ml，可选") {
+                    TextField("密度 g/ml，可选", value: $food.densityGMl, format: .number).keyboardType(.decimalPad)
+                }
                 Menu("按换算依据转换单位") {
                     Button("转换为克") { convert(to: "g") }
                     Button("转换为毫升") { convert(to: "ml") }
@@ -58,12 +66,22 @@ struct FoodEditorView: View {
                 }
             }
             Section("营养基准") {
-                TextField("以下营养对应的数量", value: $food.basisAmount, format: .number).keyboardType(.decimalPad)
+                FormField(title: "以下营养对应的数量") {
+                    TextField("以下营养对应的数量", value: $food.basisAmount, format: .number).keyboardType(.decimalPad)
+                }
                 Text("单位与实际数量一致。包装每份数据可填写基准数量 1，单位选择份。").font(.caption).foregroundStyle(.secondary)
-                TextField("热量 kcal", value: $food.basisKcal, format: .number).keyboardType(.decimalPad)
-                TextField("蛋白质 g", value: $food.basisProteinG, format: .number).keyboardType(.decimalPad)
-                TextField("碳水 g", value: $food.basisCarbsG, format: .number).keyboardType(.decimalPad)
-                TextField("脂肪 g", value: $food.basisFatG, format: .number).keyboardType(.decimalPad)
+                FormField(title: "热量 kcal") {
+                    TextField("热量 kcal", value: $food.basisKcal, format: .number).keyboardType(.decimalPad)
+                }
+                FormField(title: "蛋白质 g") {
+                    TextField("蛋白质 g", value: $food.basisProteinG, format: .number).keyboardType(.decimalPad)
+                }
+                FormField(title: "碳水 g") {
+                    TextField("碳水 g", value: $food.basisCarbsG, format: .number).keyboardType(.decimalPad)
+                }
+                FormField(title: "脂肪 g") {
+                    TextField("脂肪 g", value: $food.basisFatG, format: .number).keyboardType(.decimalPad)
+                }
                 Text("未知数据可留空，记录完整度会提示补充。").font(.caption).foregroundStyle(.secondary)
             }
             Section("本次摄入") {
@@ -146,9 +164,12 @@ struct FoodSearchView: View {
     let onSelect: (FoodItem) -> Void
 
     var body: some View {
-        List {
+        AppList {
+            FormIntro(title: "找到这一餐的食物", subtitle: "搜索营养库，或从常用食物中快速添加。", symbol: "magnifyingglass", color: Palette.peach)
             Section {
-                TextField("搜索食物名称", text: $query).onSubmit { Task { await search() } }
+                FormField(title: "搜索食物名称") {
+                    TextField("搜索食物名称", text: $query).onSubmit { Task { await search() } }
+                }
                 Toggle("同时查询已配置的 USDA 营养库", isOn: $external)
                 Button("搜索") { Task { await search() } }.disabled(loading)
                 if loading { ProgressView() }

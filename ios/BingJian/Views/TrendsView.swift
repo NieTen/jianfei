@@ -197,7 +197,8 @@ struct WeightHistoryView: View {
     @State private var editing: AppRecord?
     @State private var showHidden = false
     var body: some View {
-        List {
+        AppList {
+            FormIntro(title: "每一次记录都有意义", subtitle: "按日期查看体重，点击记录可以修改。", symbol: "scalemass", color: Palette.purple)
             Toggle("显示本地隐藏记录", isOn: $showHidden)
             ForEach(model.recordIndex.byKind["weight"] ?? []) { record in
                 if let weight = record.decode(WeightEntry.self), showHidden || (!weight.hidden && !weight.sourceDeleted) {

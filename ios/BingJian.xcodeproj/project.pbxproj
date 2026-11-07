@@ -559,6 +559,12 @@
 			"path" = "FoodEditorView.swift";
 			"sourceTree" = "<group>";
 		};
+		"C4C26D5393563878BA00EC22" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "FormComponents.swift";
+			"sourceTree" = "<group>";
+		};
 		"D56A226EE05BFBC8E1506C7A" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -636,6 +642,7 @@
 				"CFB2860595423E9747AF9CEA",
 				"C4F332939507BE00332D1002",
 				"D43BD40B92408F0020920F61",
+				"C4C26D5393563878BA00EC22",
 				"D56A226EE05BFBC8E1506C7A",
 				"6E1F8F964E5D0DFE8BEC57CC",
 				"A0A92E4AD56F853504A87CBC",
@@ -847,6 +854,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "D43BD40B92408F0020920F61";
 		};
+		"18DF3DCEF972E7EC46EE1954" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "C4C26D5393563878BA00EC22";
+		};
 		"5C575AFB6A1B3A44A700EBD3" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = "D56A226EE05BFBC8E1506C7A";
@@ -935,6 +946,7 @@
 				"F8E0EBA54AD4988D47F489A6",
 				"76B7DEF7BD5C74D6C9CA5245",
 				"520F60029C672324D709EB87",
+				"18DF3DCEF972E7EC46EE1954",
 				"5C575AFB6A1B3A44A700EBD3",
 				"85C794F616181D091828AE4C",
 				"94AD9DC937DA47C7BAB0F0D9",
