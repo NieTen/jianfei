@@ -64,11 +64,13 @@ final class RecordingFlowUITests: XCTestCase {
         let cancel = app.buttons.matching(NSPredicate(format: "label == '取消' OR label == 'Cancel'")).firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 15), "点击相册应打开系统照片选择器")
         let addButton = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '添加' OR label BEGINSWITH 'Add'")).firstMatch
-        XCTAssertTrue(addButton.exists, "多选照片选择器应提供添加操作")
+        // 云端模拟器首次加载照片库时先显示取消按钮；等待加载完成后再检查添加操作。
+        let pickerLoaded = addButton.waitForExistence(timeout: 45)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "相册入口实际点击"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+        XCTAssertTrue(pickerLoaded, "照片库加载完成后，多选照片选择器应提供添加操作")
         cancel.tap()
         XCTAssertTrue(app.buttons["meal.photos"].waitForExistence(timeout: 10))
     }
