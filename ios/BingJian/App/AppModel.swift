@@ -81,6 +81,7 @@ final class AppModel: ObservableObject {
             syncEngine = SyncEngine(api: api, store: database)
         } catch { errorMessage = error.localizedDescription }
         health.onUpdate = { [weak self] in self?.scheduleHealthRefresh() }
+        health.onAccessIssue = { [weak self] in self?.healthEnabled = false }
         watch.onRecord = { [weak self] payload in
             guard let self else { throw APIError(code: "PHONE_NOT_READY", message: "请打开手机应用") }
             try await self.receiveWatchRecord(payload)
@@ -492,8 +493,8 @@ final class AppModel: ObservableObject {
         notice = (URL(string: serverURL)?.scheme?.uppercased() ?? "后台") + " 连接成功"
     }
 
-    func authenticate(username: String, password: String, displayName: String, code: String, register: Bool, mergeLocal: Bool) async throws {
-        let input = try AccountInput(username: username, password: password, displayName: displayName, code: code).validated(registration: register)
+    func authenticate(username: String, password: String, displayName: String, register: Bool, mergeLocal: Bool) async throws {
+        let input = try AccountInput(username: username, password: password, displayName: displayName).validated(registration: register)
         await stopBackgroundWork()
         defer { changingAccount = false }
         try await api.configure(serverURL)
@@ -501,7 +502,7 @@ final class AppModel: ObservableObject {
         let accountDeviceId = UserDefaults.standard.string(forKey: deviceKey) ?? UUID().uuidString.lowercased()
         let credentials: SessionCredentials
         if register {
-            credentials = try await api.register(username: input.username, password: input.password, name: input.displayName, code: input.code, deviceId: accountDeviceId)
+            credentials = try await api.register(username: input.username, password: input.password, name: input.displayName, deviceId: accountDeviceId)
         } else {
             credentials = try await api.login(username: input.username, password: input.password, deviceId: accountDeviceId, name: UIDevice.current.name)
         }

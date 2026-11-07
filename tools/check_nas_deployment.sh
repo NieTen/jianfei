@@ -49,8 +49,21 @@ for architecture in amd64 arm64; do
     done
     "${compose[@]}" exec -T api python -c 'from pathlib import Path; assert Path("/data/.ci-persistence-check").read_text(encoding="utf-8") == "保留数据"'
     "${compose[@]}" exec -T api python -m app.cli status > "build/nas-${architecture}-status.json"
-    # 只验证开户命令确实返回凭据，不将测试凭据写入日志。
-    "${compose[@]}" exec -T api python -m app.cli enrollment | python3 -c 'import sys; assert len(sys.stdin.read().strip()) >= 20; print("开户凭据生成通过")'
+    # 通过实际容器接口注册和登录，不传入系统密钥，不把会话凭据写入日志。
+    "${compose[@]}" exec -T api python - <<'PY'
+import uuid
+import httpx
+with httpx.Client(base_url="http://127.0.0.1:8000/api/v1", trust_env=False) as client:
+    body = {"username": "nas_" + uuid.uuid4().hex[:10], "password": "nas-test-password-123",
+            "display_name": "无密钥注册测试", "device_id": str(uuid.uuid4())}
+    created = client.post("/auth/register", json=body)
+    assert created.status_code == 200, created.status_code
+    signed_in = client.post("/auth/login", json={key: body[key] for key in ("username", "password", "device_id")})
+    assert signed_in.status_code == 200, signed_in.status_code
+    assert signed_in.json()["user_id"] == created.json()["user_id"]
+    assert client.get("/records").status_code == 401
+print("无系统密钥注册、登录与匿名访问隔离通过")
+PY
     python3 - "$architecture" <<'PY'
 import json
 import sys

@@ -76,7 +76,7 @@ struct HealthDetailView: View {
                     if let updated = health?.updatedAt, let date = TimeFormat.parse(updated) {
                         Text("最近读取 \(date.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
                     }
-                    Button("刷新健康数据") { model.perform { try await model.refreshHealth() } }.disabled(healthManager.refreshing)
+                    Button("刷新健康数据") { model.perform { try await model.refreshHealth() } }.disabled(healthManager.refreshing || healthManager.accessIssue != nil)
                     NavigationLink("权限与历史回填") { HealthSettingsView() }
                 }
                 PrivacyNote()
@@ -91,10 +91,17 @@ struct HealthSettingsView: View {
     @State private var startDate = Calendar.current.date(byAdding: .month, value: -12, to: Date()) ?? Date()
     var body: some View {
         Form {
+            if let issue = health.accessIssue {
+                Section("健康数据暂不可用") {
+                    Label("需要重新签名安装", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(issue).font(.subheadline)
+                }
+            }
             Section("健康数据读取") {
                 Toggle("前台自动刷新", isOn: $model.healthEnabled)
+                    .disabled(health.accessIssue != nil)
                     .onChange(of: model.healthEnabled) { _, value in UserDefaults.standard.set(value, forKey: "health_enabled") }
-                Button("请求或补充健康读取权限") { model.perform { try await model.authorizeHealth() } }
+                Button(health.accessIssue == nil ? "请求或补充健康读取权限" : "重新检查健康读取权限") { model.perform { try await model.authorizeHealth() } }
                 Text("系统可能无法区分未授权和没有数据。拒绝读取时仍可手动记录。权限请在 iPhone 的健康或系统设置中调整。")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -105,7 +112,7 @@ struct HealthSettingsView: View {
                         try await model.requireStore().setMetadata("health_disabled_after_delete", value: nil)
                         try await model.refreshHealth(from: startDate)
                     }
-                }.disabled(health.refreshing)
+                }.disabled(health.refreshing || health.accessIssue != nil)
                 if health.refreshing { ProgressView(value: health.progress) }
                 Text(health.status).font(.caption).foregroundStyle(.secondary)
                 Text("仅能读取健康 App 中实际存在且当前可访问的数据。大范围补取会分批保存，重启后可继续。")

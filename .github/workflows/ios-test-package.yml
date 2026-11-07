@@ -8,6 +8,8 @@ on:
       - 'ios/**'
       - 'tools/generate_xcode_project.py'
       - 'tools/check_simulator_entitlements.py'
+      - 'tools/prepare_ios_resigning.py'
+      - 'tools/check_ios_health_entitlements.py'
       - 'backend/app/resources/food_schema.json'
       - '.github/workflows/ios-test-package.yml'
   pull_request:
@@ -16,6 +18,8 @@ on:
       - 'ios/**'
       - 'tools/generate_xcode_project.py'
       - 'tools/check_simulator_entitlements.py'
+      - 'tools/prepare_ios_resigning.py'
+      - 'tools/check_ios_health_entitlements.py'
       - 'backend/app/resources/food_schema.json'
       - '.github/workflows/ios-test-package.yml'
   workflow_dispatch:
@@ -68,6 +72,7 @@ jobs:
 
       - name: 生成待签名 IPA
         run: |
+          set -euo pipefail
           app_path='build/DerivedData/Build/Products/Release-iphoneos/BingJian.app'
           test -f "$app_path/BingJian"
           test -f "$app_path/food_schema.json"
@@ -75,11 +80,13 @@ jobs:
           xcrun lipo "$app_path/BingJian" -verify_arch arm64
           mkdir -p build/package/Payload
           ditto "$app_path" build/package/Payload/BingJian.app
+          python3 tools/prepare_ios_resigning.py build/package/Payload/BingJian.app
           (
             cd build/package
             ditto -c -k --keepParent Payload ../BingJian-unsigned.ipa
           )
           unzip -t build/BingJian-unsigned.ipa
+          python3 tools/check_ios_health_entitlements.py build/BingJian-unsigned.ipa --allow-prepared | tee build/healthkit-signing-check.log
           (
             cd build
             shasum -a 256 BingJian-unsigned.ipa > BingJian-unsigned.ipa.sha256
@@ -88,6 +95,7 @@ jobs:
           {
             echo '## 已生成待签名测试包'
             echo '下载构建产物中的 IPA，通过个人 Apple 账号签名后安装。'
+            echo '已保留 iPhone 与 Watch 的 HealthKit 签名声明；临时签名不代替个人签名与描述文件。'
             echo '本次构建完成真机代码编译，手机安装、HealthKit 和 Watch 联调仍需验证。'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -99,6 +107,7 @@ jobs:
             build/BingJian-unsigned.ipa
             build/BingJian-unsigned.ipa.sha256
             build/安装说明.md
+            build/healthkit-signing-check.log
           if-no-files-found: error
           retention-days: 7
 
@@ -110,6 +119,7 @@ jobs:
           path: |
             build/environment.log
             build/xcodebuild.log
+            build/healthkit-signing-check.log
             build/Build.xcresult
           if-no-files-found: warn
           retention-days: 7

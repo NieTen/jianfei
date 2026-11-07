@@ -56,7 +56,7 @@ struct SettingsView: View {
                     Text("所有主动记录先保存到手机。个人同步、伙伴共享和外部 AI 处理分别控制。")
                     Text("导出文件由你保管密码。仅本机数据可通过加密导出包恢复，卸载前请确认备份。")
                     PrivacyNote()
-                    Text("并肩 · 0.1.5").font(.caption2)
+                    Text("并肩 · 0.1.6").font(.caption2)
                 }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 4)
             }.padding(20).buttonStyle(.plain)
         }.background(Palette.canvas).navigationTitle("我的").navigationBarTitleDisplayMode(.inline)
@@ -69,7 +69,6 @@ struct ConnectionSettingsView: View {
     @State private var username = UserDefaults.standard.string(forKey: "last_username") ?? ""
     @State private var password = ""
     @State private var displayName = ""
-    @State private var code = ""
     @State private var registration = false
     @State private var mergeLocal = true
     @State private var recovering = false
@@ -82,7 +81,7 @@ struct ConnectionSettingsView: View {
     @State private var busy = false
 
     private var accountInput: AccountInput {
-        AccountInput(username: username, password: password, displayName: displayName, code: code)
+        AccountInput(username: username, password: password, displayName: displayName)
     }
 
     var body: some View {
@@ -113,7 +112,7 @@ struct ConnectionSettingsView: View {
                 Section("登录或开户") {
                     Toggle("创建新账号", isOn: $registration).disabled(busy)
                     AccountFieldsView(username: $username, password: $password, displayName: $displayName,
-                                      code: $code, registration: registration, errors: accountErrors).disabled(busy)
+                                      registration: registration, errors: accountErrors).disabled(busy)
                     Toggle("将当前未绑定的离线记录关联到此账号", isOn: $mergeLocal)
                     Button(registration ? "开户并登录" : "登录") { Task { await authenticate() } }.disabled(busy)
                     if busy { ProgressView() }
@@ -168,12 +167,11 @@ struct ConnectionSettingsView: View {
         defer { busy = false }
         do {
             try await model.authenticate(username: username, password: password, displayName: displayName,
-                                         code: code, register: registration, mergeLocal: mergeLocal)
+                                         register: registration, mergeLocal: mergeLocal)
             savedRecovery = model.session?.recoveryCode ?? ""
             submitted = false
             accountErrors = [:]
             password = ""
-            code = ""
         } catch {
             if let apiError = error as? APIError {
                 for (key, message) in apiError.fieldErrors {

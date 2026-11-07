@@ -46,10 +46,9 @@ class APITests(unittest.TestCase):
         self.temporary.cleanup()
 
     def register(self, username):
-        code = self.service.auth.create_enrollment()
         response = self.client.post("/api/v1/auth/register", json={
             "username": username, "password": "test-password-123", "display_name": username,
-            "bootstrap_code": code, "device_id": str(uuid.uuid4()), "device_name": "测试设备",
+            "device_id": str(uuid.uuid4()), "device_name": "测试设备",
         })
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
@@ -103,14 +102,30 @@ class APITests(unittest.TestCase):
         self.assertEqual(response.json()["status"], "ready")
         return image_id, meal_id, data
 
-    def test_auth_and_one_time_enrollment(self):
-        code = self.service.auth.create_enrollment()
+    def test_registration_without_enrollment_keeps_authentication_required(self):
         body = {"username": "new_user", "password": "test-password-123", "display_name": "新用户",
-                "bootstrap_code": code, "device_id": str(uuid.uuid4())}
+                "device_id": str(uuid.uuid4())}
         self.assertEqual(self.client.post("/api/v1/auth/register", json=body).status_code, 200)
         body.update(username="another_user", device_id=str(uuid.uuid4()))
-        self.assertEqual(self.client.post("/api/v1/auth/register", json=body).status_code, 403)
+        self.assertEqual(self.client.post("/api/v1/auth/register", json=body).status_code, 200)
         self.assertEqual(self.client.get("/api/v1/records").status_code, 401)
+
+    def test_legacy_registration_code_is_optional_and_ignored(self):
+        for code in ("", "expired-or-wrong-code", None):
+            response = self.client.post("/api/v1/auth/register", json={
+                "username": "legacy_" + uuid.uuid4().hex[:10], "password": "test-password-123",
+                "display_name": "旧客户端", "bootstrap_code": code, "device_id": str(uuid.uuid4()),
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+
+    def test_open_registration_still_validates_fields_and_username_uniqueness(self):
+        body = {"username": "user_a", "password": "abc", "display_name": "测试用户", "device_id": str(uuid.uuid4())}
+        rejected = self.client.post("/api/v1/auth/register", json=body)
+        self.assertEqual(rejected.status_code, 422)
+        self.assertEqual(rejected.json()["details"][0]["field"], "body.password")
+        body["password"] = "test-password-123"
+        self.assertEqual(self.client.post("/api/v1/auth/register", json=body).status_code, 409)
+        self.assertFalse(self.client.get("/api/v1/health").json()["registration_requires_code"])
 
     def test_refresh_rotates_and_logout_revokes(self):
         response = self.client.post("/api/v1/auth/refresh", json={"refresh_token": self.user["refresh_token"]})

@@ -4,7 +4,6 @@ struct AccountFieldsView: View {
     @Binding var username: String
     @Binding var password: String
     @Binding var displayName: String
-    @Binding var code: String
     let registration: Bool
     let errors: [AccountField: String]
 
@@ -23,9 +22,6 @@ struct AccountFieldsView: View {
         if registration {
             TextField("称呼（1～40 个字符）", text: $displayName)
                 .modifier(AccountFieldStyle(message: errors[.displayName]))
-            SecureField("部署者提供的开户凭据", text: $code)
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                .modifier(AccountFieldStyle(message: errors[.enrollmentCode]))
             Text("用户名只支持英文字母、数字和 . _ -；称呼可以使用中文。")
                 .font(.caption).foregroundStyle(.secondary)
         }

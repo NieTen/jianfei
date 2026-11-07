@@ -133,12 +133,12 @@ actor APIClient {
         return credentials
     }
 
-    func register(username: String, password: String, name: String, code: String, deviceId: String) async throws -> SessionCredentials {
-        let input = try AccountInput(username: username, password: password, displayName: name, code: code).validated(registration: true)
+    func register(username: String, password: String, name: String, deviceId: String) async throws -> SessionCredentials {
+        let input = try AccountInput(username: username, password: password, displayName: name).validated(registration: true)
         clearSession()
         let response = try await send("auth/register", method: "POST", body: [
             "username": .string(input.username), "password": .string(input.password), "display_name": .string(input.displayName),
-            "bootstrap_code": .string(input.code), "device_id": .string(deviceId), "device_name": .string("我的 iPhone")
+            "device_id": .string(deviceId), "device_name": .string("我的 iPhone")
         ], authenticated: false)
         guard let value = response.object else { throw APIError(code: "INVALID_RESPONSE", message: "注册响应无效") }
         let credentials = try Codec.decode(SessionCredentials.self, from: value)

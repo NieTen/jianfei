@@ -4,18 +4,13 @@ import uuid
 from datetime import timedelta
 
 from .errors import AppError
-from .security import load_secret, new_token, now_iso, password_hash, token_hash, utc_now, verify_password
+from .security import new_token, now_iso, password_hash, token_hash, utc_now, verify_password
 
 
 class AuthService:
     def __init__(self, database, settings):
         self.db = database
         self.settings = settings
-        self.bootstrap = settings.bootstrap_code or load_secret(settings.data_dir / "secrets" / "bootstrap.code")
-        with self.db.transaction() as repo:
-            if not repo.one("enrollments", {"code_hash": token_hash(self.bootstrap)}):
-                repo.insert("enrollments", {"code_hash": token_hash(self.bootstrap),
-                                           "expires_at": (utc_now() + timedelta(hours=24)).isoformat()})
 
     def create_enrollment(self):
         code = new_token()
@@ -60,11 +55,7 @@ class AuthService:
         }
         try:
             with self.db.transaction() as repo:
-                enrollment = repo.one("enrollments", {"code_hash": token_hash(request.bootstrap_code), "used_by": None})
-                if not enrollment or enrollment["expires_at"] <= now_iso():
-                    raise AppError("INVALID_ENROLLMENT", "开户凭据错误、过期或已使用", 403)
                 repo.insert("users", user)
-                repo.update("enrollments", {"used_by": user["id"]}, {"code_hash": token_hash(request.bootstrap_code)})
                 result = self.issue_session(repo, user, request.device_id, request.device_name)
                 repo.audit(user["id"], "account_created", user["id"])
                 result["recovery_code"] = recovery

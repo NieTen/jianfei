@@ -1,4 +1,4 @@
-"""检查模拟器程序每个架构中实际使用的钥匙串授权。"""
+"""检查模拟器程序每个架构中实际使用的钥匙串及 HealthKit 授权。"""
 
 import argparse
 import json
@@ -48,6 +48,8 @@ def check_binary(binary, bundle_identifier):
             raise ValueError("模拟器应用身份与预期不一致")
         if expected not in value.get("keychain-access-groups", []):
             raise ValueError("模拟器缺少本应用的钥匙串访问组")
+        if value.get("com.apple.developer.healthkit") is not True:
+            raise ValueError("模拟器主程序缺少 HealthKit 授权")
         if entitlements is not None and value != entitlements:
             raise ValueError("不同架构的模拟器授权不一致")
         entitlements = value

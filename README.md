@@ -19,7 +19,7 @@
 
 第一次打开应用时填写后台地址。保存后自动复用，后续可在“我的 → 私有服务器与账号”修改。
 
-开户用户名为 3～64 位英文字母、数字或 . _ -，密码为 10～128 位，称呼为 1～40 个字符，并需填写部署者提供的开户凭据。0.1.5 起，提交时同时标红全部不合格字段并逐项提示，修改后逐项清除；后台连接测试只检查服务可达性，不代表开户表单已通过校验。
+注册用户名为 3～64 位英文字母、数字或 . _ -，密码为 10～128 位，称呼为 1～40 个字符。0.1.6 起直接注册，无需系统密钥或开户凭据；需同时更新 App 与 NAS 后台。提交时同时标红全部不合格字段并逐项提示，修改后逐项清除。后台连接测试只检查服务可达性，不代表表单已通过校验。
 
 0.1.3 起可显式填写 `http://` 后台地址，适合可信局域网测试；不写协议仍默认 HTTPS。HTTP 连接不需要安装证书。群晖部署默认提供 18080 HTTP 端口，同时保留 8443 HTTPS。
 
@@ -41,7 +41,7 @@ Copy-Item .env.example .env
 New-Item -ItemType Directory -Path secrets -Force
 # 编辑 .env，填入实际局域网地址
 docker compose up -d --build
-docker compose exec api python -m app.cli enrollment
+docker compose exec api python -m app.cli status
 ~~~
 
 在 Mac 上打开 ios/BingJian.xcodeproj，选择签名团队和自己的 Bundle Identifier 后构建。

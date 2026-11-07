@@ -118,7 +118,7 @@ def pairing(service, certificate_path):
 def main():
     parser = argparse.ArgumentParser(description="并肩后台运维")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("enrollment", help="显示开户凭据")
+    commands.add_parser("enrollment", help="兼容旧客户端的凭据命令，新版注册无需使用")
     backup = commands.add_parser("backup", help="生成并验证加密备份")
     backup.add_argument("--full", action="store_true", help="将全部附件嵌入单个完整包")
     restoration = commands.add_parser("restore", help="停止 API 后恢复备份")

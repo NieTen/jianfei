@@ -13,7 +13,8 @@ class Registration(InputModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_.-]+$")
     password: str = Field(min_length=10, max_length=128)
     display_name: str = Field(min_length=1, max_length=40)
-    bootstrap_code: str
+    # 兼容旧客户端提交的字段，新版注册不再要求或验证开户凭据。
+    bootstrap_code: str | None = None
     device_id: str = Field(min_length=8, max_length=80)
     device_name: str = Field(default="我的 iPhone", max_length=80)
 

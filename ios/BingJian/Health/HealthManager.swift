@@ -8,8 +8,10 @@ final class HealthManager: ObservableObject {
     @Published var refreshing = false
     @Published var progress: Double = 0
     @Published var status = "尚未读取健康数据"
+    @Published private(set) var accessIssue: String?
     private var observers: [HKObserverQuery] = []
     var onUpdate: (() -> Void)?
+    var onAccessIssue: (() -> Void)?
 
     let quantityIdentifiers: [HKQuantityTypeIdentifier] = [
         .stepCount, .activeEnergyBurned, .basalEnergyBurned, .heartRate, .restingHeartRate,
@@ -17,6 +19,11 @@ final class HealthManager: ObservableObject {
     ]
 
     func authorize() async throws {
+        do { try await authorizeAvailable() }
+        catch { throw reportFailure(error) }
+    }
+
+    private func authorizeAvailable() async throws {
         guard HKHealthStore.isHealthDataAvailable() else {
             throw APIError(code: "HEALTH_UNAVAILABLE", message: "当前设备无法读取健康数据")
         }
@@ -29,30 +36,40 @@ final class HealthManager: ObservableObject {
         if let sex = HKCharacteristicType.characteristicType(forIdentifier: .biologicalSex) { types.insert(sex) }
         types.insert(HKObjectType.workoutType())
         try await healthStore.requestAuthorization(toShare: [], read: types)
+        accessIssue = nil
         UserDefaults.standard.set(true, forKey: "health_enabled")
         installObservers()
         status = "已请求读取权限，无数据时仍可手动记录"
     }
 
     func installObservers() {
-        guard observers.isEmpty else { return }
+        guard observers.isEmpty, accessIssue == nil, HKHealthStore.isHealthDataAvailable() else { return }
         let sampleTypes: [HKSampleType] = quantityIdentifiers.compactMap { HKQuantityType.quantityType(forIdentifier: $0) } +
             [HKObjectType.workoutType(), HKQuantityType.quantityType(forIdentifier: .bodyMass)!,
              HKCategoryType.categoryType(forIdentifier: .sleepAnalysis)!]
         for type in sampleTypes {
-            let query = HKObserverQuery(sampleType: type, predicate: nil) { [weak self] _, completion, _ in
+            let query = HKObserverQuery(sampleType: type, predicate: nil) { [weak self] _, completion, error in
                 Task { @MainActor in
-                    self?.onUpdate?()
+                    if let error { _ = self?.reportFailure(error) }
+                    else { self?.onUpdate?() }
                     completion()
                 }
             }
             healthStore.execute(query)
             observers.append(query)
-            healthStore.enableBackgroundDelivery(for: type, frequency: .hourly) { _, _ in }
+            healthStore.enableBackgroundDelivery(for: type, frequency: .hourly) { [weak self] _, error in
+                if let error { Task { @MainActor in _ = self?.reportFailure(error) } }
+            }
         }
     }
 
     func refresh(store: LocalDatabase, profile: BodyProfile, deviceId: String, historyStart: Date? = nil) async throws {
+        if let accessIssue { throw APIError(code: HealthAccessError.missingCapabilityCode, message: accessIssue) }
+        do { try await refreshAvailable(store: store, profile: profile, deviceId: deviceId, historyStart: historyStart) }
+        catch { throw reportFailure(error) }
+    }
+
+    private func refreshAvailable(store: LocalDatabase, profile: BodyProfile, deviceId: String, historyStart: Date?) async throws {
         guard !refreshing else { return }
         if try await store.metadata("health_disabled_after_delete") == "true" { return }
         refreshing = true
@@ -260,6 +277,25 @@ final class HealthManager: ObservableObject {
     }
 
     func importedProfile() async throws -> BodyProfile {
+        if let accessIssue { throw APIError(code: HealthAccessError.missingCapabilityCode, message: accessIssue) }
+        do { return try await importAvailableProfile() }
+        catch { throw reportFailure(error) }
+    }
+
+    func reportFailure(_ error: Error) -> Error {
+        let translated = HealthAccessError.translated(error)
+        status = translated.localizedDescription
+        if let failure = translated as? APIError, failure.code == HealthAccessError.missingCapabilityCode {
+            accessIssue = failure.message
+            UserDefaults.standard.set(false, forKey: "health_enabled")
+            for observer in observers { healthStore.stop(observer) }
+            observers.removeAll()
+            onAccessIssue?()
+        }
+        return translated
+    }
+
+    private func importAvailableProfile() async throws -> BodyProfile {
         var result = BodyProfile()
         if let birthday = try? healthStore.dateOfBirthComponents(),
            let date = Calendar.current.date(from: birthday) { result.birthDate = TimeFormat.day(date) }

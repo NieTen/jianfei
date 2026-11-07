@@ -77,7 +77,7 @@ jobs:
             echo '## 群晖可直接拉取的后台镜像'
             echo "镜像：\`$IMAGE:latest\`"
             echo "本次固定版本：\`$CANDIDATE\`"
-            echo 'AMD64 与 ARM64 均已运行后台回归、HTTPS、开户命令及重建容器后的数据保留检查。'
+            echo 'AMD64 与 ARM64 均已运行后台回归、HTTPS、无密钥注册登录及重建容器后的数据保留检查。'
             echo 'ARM64 在 QEMU 下验证；实际群晖硬件仍需部署验收。'
             echo '部署说明：deploy/synology/群晖部署说明.md。镜像发布不会更改包的可见性。'
           } >> "$GITHUB_STEP_SUMMARY"

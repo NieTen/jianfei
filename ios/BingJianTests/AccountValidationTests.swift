@@ -3,61 +3,58 @@ import XCTest
 
 final class AccountValidationTests: XCTestCase {
     func testThreeLetterFieldsOnlyRejectShortPassword() {
-        let input = AccountInput(username: "abc", password: "abc", displayName: "abc", code: "test-code")
+        let input = AccountInput(username: "abc", password: "abc", displayName: "abc")
         let errors = input.validationErrors(registration: true)
         XCTAssertEqual(Set(errors.keys), [.password])
         XCTAssertTrue(errors[.password]?.contains("当前为 3 位") == true)
     }
 
     func testAllInvalidFieldsAreReportedTogether() {
-        let input = AccountInput(username: "中文", password: "abc", displayName: "  ", code: "\n")
+        let input = AccountInput(username: "中文", password: "abc", displayName: "  ")
         let errors = input.validationErrors(registration: true)
         XCTAssertEqual(Set(errors.keys), Set(AccountField.allCases))
         XCTAssertThrowsError(try input.validated(registration: true)) { error in
-            XCTAssertEqual((error as? APIError)?.fieldErrors.count, 4)
+            XCTAssertEqual((error as? APIError)?.fieldErrors.count, 3)
             XCTAssertFalse(error.localizedDescription.contains("连接未完成"))
         }
     }
 
     func testCorrectingOneFieldKeepsOtherFieldsMarked() {
-        let previous = AccountInput(username: "ab", password: "abc", displayName: "", code: "")
+        let previous = AccountInput(username: "ab", password: "abc", displayName: "")
         var corrected = previous
         corrected.password = "test-password-123"
         let errors = corrected.updatedErrors(from: previous, errors: previous.validationErrors(registration: true), registration: true)
-        XCTAssertEqual(Set(errors.keys), [.username, .displayName, .enrollmentCode])
+        XCTAssertEqual(Set(errors.keys), [.username, .displayName])
         corrected.username = "abc"
         corrected.displayName = "abc"
-        corrected.code = "test-code"
         XCTAssertTrue(corrected.updatedErrors(from: previous, errors: errors, registration: true).isEmpty)
     }
 
     func testServerErrorClearsOnlyWhenItsFieldChanges() {
-        let previous = AccountInput(username: "abc", password: "test-password-123", displayName: "abc", code: "old-code")
+        let previous = AccountInput(username: "abc", password: "test-password-123", displayName: "abc")
         var edited = previous
+        edited.password = "updated-password-123"
+        let errors = edited.updatedErrors(from: previous, errors: [.username: "用户名已存在"], registration: true)
+        XCTAssertEqual(errors[.username], "用户名已存在")
+        let beforeName = edited
         edited.username = "other_user"
-        let errors = edited.updatedErrors(from: previous, errors: [.username: "用户名已存在", .enrollmentCode: "开户凭据已过期"], registration: true)
-        XCTAssertNil(errors[.username])
-        XCTAssertEqual(errors[.enrollmentCode], "开户凭据已过期")
-        let beforeCode = edited
-        edited.code = "new-code"
-        XCTAssertTrue(edited.updatedErrors(from: beforeCode, errors: errors, registration: true).isEmpty)
+        XCTAssertTrue(edited.updatedErrors(from: beforeName, errors: errors, registration: true).isEmpty)
     }
 
     func testNormalizingAccountFieldsDoesNotChangePassword() throws {
-        let input = try AccountInput(username: "  ABC\n", password: " 12345678 ", displayName: " 昵称 ", code: " test-code\n").validated(registration: true)
+        let input = try AccountInput(username: "  ABC\n", password: " 12345678 ", displayName: " 昵称 ").validated(registration: true)
         XCTAssertEqual(input.username, "abc")
         XCTAssertEqual(input.displayName, "昵称")
-        XCTAssertEqual(input.code, "test-code")
         XCTAssertEqual(input.password, " 12345678 ")
     }
 
     func testLengthBoundsMatchBackendUnicodeRules() {
         var input = AccountInput(username: String(repeating: "a", count: 64), password: String(repeating: "a", count: 128),
-                                 displayName: String(repeating: "中", count: 40), code: "test-code")
+                                 displayName: String(repeating: "中", count: 40))
         XCTAssertTrue(input.validationErrors(registration: true).isEmpty)
         input.username += "a"; input.password += "a"; input.displayName += "中"
         XCTAssertEqual(Set(input.validationErrors(registration: true).keys), [.username, .password, .displayName])
-        input = AccountInput(username: "abc", password: String(repeating: "e\u{301}", count: 5), displayName: "abc", code: "test-code")
+        input = AccountInput(username: "abc", password: String(repeating: "e\u{301}", count: 5), displayName: "abc")
         XCTAssertTrue(input.validationErrors(registration: true).isEmpty)
     }
 
@@ -70,7 +67,7 @@ final class AccountValidationTests: XCTestCase {
         let duplicate = APIError.response(status: 409, object: ["code": .string("USERNAME_EXISTS"), "message": .string("用户名已存在")])
         let expired = APIError.response(status: 403, object: ["code": .string("INVALID_ENROLLMENT"), "message": .string("开户凭据错误、过期或已使用")])
         XCTAssertNotNil(duplicate.fieldErrors["username"])
-        XCTAssertNotNil(expired.fieldErrors["bootstrap_code"])
+        XCTAssertEqual(expired.code, "SERVER_REGISTRATION_UPGRADE")
     }
 
     @MainActor

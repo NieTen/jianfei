@@ -33,7 +33,7 @@ class RuntimeTests(unittest.TestCase):
                     device_id = str(uuid.uuid4())
                     account = client.post("/auth/register", json={
                         "username": "runtime_user", "password": "runtime-password-123", "display_name": "运行测试",
-                        "bootstrap_code": "runtime-test-enrollment", "device_id": device_id,
+                        "device_id": device_id,
                     })
                     self.assertEqual(account.status_code, 200, account.text)
                     session = account.json()
