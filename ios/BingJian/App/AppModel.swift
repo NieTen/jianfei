@@ -52,7 +52,7 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(externalAIConsent, forKey: "external_ai_consent:" + namespace) }
     }
     let api = APIClient()
-    let responses = ResponsesClient()
+    let responses: ResponsesClient
     let health = HealthManager()
     let reminders = ReminderManager()
     let watch = PhoneWatchBridge()
@@ -73,7 +73,8 @@ final class AppModel: ObservableObject {
     private let thumbnailCache = NSCache<NSString, NSData>()
     var deviceId: String
 
-    init() {
+    init(responses: ResponsesClient = ResponsesClient()) {
+        self.responses = responses
         namespace = UserDefaults.standard.string(forKey: "local_namespace") ?? UUID().uuidString.lowercased()
         UserDefaults.standard.set(namespace, forKey: "local_namespace")
         deviceId = UserDefaults.standard.string(forKey: "device_id") ?? UUID().uuidString.lowercased()
@@ -694,6 +695,29 @@ final class AppModel: ObservableObject {
         return String(decoding: data, as: UTF8.self)
     }
 
+    func hasSavedAIKey(for configuration: AIConfiguration) -> Bool {
+        guard let address = try? AIAddress.normalize(configuration.baseUrl),
+              let savedAddress = try? AIAddress.normalize(aiConfiguration.baseUrl), address == savedAddress else { return false }
+        return !aiAPIKey().isEmpty || (configuration.execution == "gateway" && aiHasServerKey)
+    }
+
+    func aiRequestKey(configuration: AIConfiguration, enteredKey: String) throws -> String {
+        let entered = enteredKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !entered.isEmpty { return entered }
+        // 仅向原接口复用密钥，修改模型、输出设置不会使已保存凭据失效。
+        guard try AIAddress.normalize(configuration.baseUrl) == AIAddress.normalize(aiConfiguration.baseUrl) else {
+            if !aiAPIKey().isEmpty || aiHasServerKey {
+                throw APIError(code: "AI_KEY_REQUIRED", message: "接口地址已更换，请填写新接口对应的密钥")
+            }
+            return ""
+        }
+        let saved = aiAPIKey()
+        if saved.isEmpty && aiHasServerKey {
+            throw APIError(code: "AI_LOCAL_KEY_REQUIRED", message: "密钥仅保存在后台，请使用后台调用；手机直连需先在本机保存密钥")
+        }
+        return saved
+    }
+
     private func loadAIConfiguration() {
         externalAIConsent = UserDefaults.standard.bool(forKey: "external_ai_consent:" + namespace)
         if let data = UserDefaults.standard.data(forKey: "ai_configuration:" + namespace),
@@ -709,24 +733,26 @@ final class AppModel: ObservableObject {
 
     func saveAIConfiguration(_ value: AIConfiguration, apiKey: String, requireModel: Bool = true, clearKey: Bool = false) async throws {
         var configuration = value
+        let apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if !configuration.useServerDefaults {
             configuration.baseUrl = try AIAddress.normalize(value.baseUrl).absoluteString
             if requireModel && configuration.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 throw APIError(code: "AI_MODEL_REQUIRED", message: "请选择或手动填写模型标识")
             }
         }
-        if configuration.baseUrl != aiConfiguration.baseUrl || configuration.model != aiConfiguration.model {
+        let addressChanged = (try? AIAddress.normalize(configuration.baseUrl)) != (try? AIAddress.normalize(aiConfiguration.baseUrl))
+        if configuration.execution == "direct" && !clearKey {
+            _ = try aiRequestKey(configuration: configuration, enteredKey: apiKey)
+        }
+        if addressChanged || configuration.model != aiConfiguration.model {
             externalAIConsent = false
         }
-        if configuration.execution == "direct" && apiKey.isEmpty && aiHasServerKey && !clearKey {
-            throw APIError(code: "AI_LOCAL_KEY_REQUIRED", message: "手机直连需要在本机填写密钥，后台密钥不会下载到手机")
-        }
-        let addressChanged = configuration.baseUrl != aiConfiguration.baseUrl
         if clearKey || (addressChanged && apiKey.isEmpty) {
             KeychainStore.delete("ai_key:" + namespace)
             UserDefaults.standard.set(true, forKey: "ai_clear_key:" + namespace)
         } else if !apiKey.isEmpty {
             try KeychainStore.save(Data(apiKey.utf8), key: "ai_key:" + namespace)
+            UserDefaults.standard.set(false, forKey: "ai_clear_key:" + namespace)
         }
         UserDefaults.standard.set(try Codec.encoder().encode(configuration), forKey: "ai_configuration:" + namespace)
         aiConfiguration = configuration
@@ -765,7 +791,8 @@ final class AppModel: ObservableObject {
             let response = try await api.send("ai/models", query: ["refresh": "true"]).object ?? [:]
             result = response.objects("models").map { AIModelOption(id: $0.text("id"), name: $0.text("name", fallback: $0.text("id"))) }
         } else {
-            result = try await responses.models(configuration: configuration, apiKey: apiKey, refresh: true)
+            let key = try aiRequestKey(configuration: configuration, enteredKey: apiKey)
+            result = try await responses.models(configuration: configuration, apiKey: key, refresh: true)
         }
         availableAIModels = result
         UserDefaults.standard.set(try Codec.encoder().encode(result), forKey: "ai_models:" + namespace)

@@ -95,14 +95,83 @@ class AIService:
         headers = {"Idempotency-Key": task["request_key"]}
         if configuration["api_key"]:
             headers["Authorization"] = "Bearer " + configuration["api_key"]
-        prompt = (
-            "请识别同一餐的食物，多角度照片中的同一份食物只算一次。"
-            "只返回 JSON 对象，字段 items、uncertainty_note。items 每项包含 name、estimated_weight_g、"
-            "calories_kcal、protein_g、carbs_g、fat_g、confidence、food_state、evidence_photo_ids。"
-            "营养值是估算份量的总值。无法确定的营养素返回 null，无法识别返回空列表。"
-            "不要猜测隐藏油量或把估算当成测量。照片标识依次为 "
-            + json.dumps(request["photo_ids"], ensure_ascii=False) + "。用户说明 " + request.get("note", "")
-        )
+        prompt = self.schema["description"] + "\n照片标识依次为 " + json.dumps(request["photo_ids"], ensure_ascii=False)
+        prompt += "。用户说明 " + json.dumps(request.get("note", ""), ensure_ascii=False)
+        async with httpx.AsyncClient(timeout=180, follow_redirects=False, trust_env=False) as client:
+            for attempt in range(2):
+                # 补全前重新核对任务与配置，取消或更换服务后不继续发送照片。
+                with self.db.read() as repo:
+                    latest = repo.one("tasks", {"id": task["id"]})
+                    user = repo.one("users", {"id": task["user_id"], "status": "active"})
+                current = self.providers.configuration(task["user_id"])
+                if not user or not latest or latest["status"] == "cancelled":
+                    raise AppError("TASK_CANCELLED", "账号或任务状态已变化，识别已停止", 409)
+                if current["version"] != configuration["version"] or current["base_url"] != configuration["base_url"]:
+                    raise AppError("PROVIDER_CHANGED", "AI 配置已变化，请重新提交任务", 409)
+                body, url = self.recognition_request(configuration, task, request, images, prompt)
+                # 补全是不同请求，不能复用首次响应的幂等缓存。
+                headers["Idempotency-Key"] = task["request_key"] + (":nutrition" if attempt else "")
+                if configuration["protocol"] == "generic":
+                    body["request_id"] = headers["Idempotency-Key"]
+                response = await client.post(url, headers=headers, json=body)
+                self.providers.check_response(response)
+                raw = response.json()
+                if configuration["protocol"] == "generic":
+                    output = raw
+                elif configuration["protocol"] == "chat_completions":
+                    output = json.loads(raw["choices"][0]["message"]["content"])
+                else:
+                    output = self.parse_responses_output(raw)
+                try:
+                    validated = AIRecognitionOutput.model_validate(output).model_dump()
+                except ValidationError as error:
+                    if attempt:
+                        raise AppError("INVALID_AI_OUTPUT", "模型自动补全后返回的份量或营养数据仍无效，请重试或更换模型") from error
+                    problem = "份量或营养字段格式无效，必须使用约定字段名和有效 JSON 数值"
+                else:
+                    output = validated
+                    fields = ("estimated_weight_g", "calories_kcal", "protein_g", "carbs_g", "fat_g")
+                    missing = [f"{index + 1}.{field}" for index, item in enumerate(output["items"])
+                               for field in fields if item[field] is None]
+                    if not missing:
+                        break
+                    if attempt:
+                        raise AppError("AI_NUTRITION_INCOMPLETE", "AI 自动补全后仍未提供完整份量与营养，请重试或更换支持图像营养估算的模型")
+                    problem = "缺少 " + "、".join(missing)
+                prompt += ("\n上次结果" + problem + "。请结合原照片补全并返回整餐完整 JSON，"
+                           "不要只返回缺失字段，不要删除已识别的食物。对缺少份量的食物估算常见份量，并核对全部营养与份量一致。"
+                           "上次结果：" + json.dumps(output, ensure_ascii=False)[:16000])
+        items = []
+        with self.db.read() as repo:
+            preferences = repo.find("entities", {"user_id": task["user_id"], "kind": "food_preference", "deleted_at": None})
+        preference_map = {json.loads(row["payload"])["food_name"].casefold(): json.loads(row["payload"]) for row in preferences}
+        for item in output["items"]:
+            amount = item["estimated_weight_g"]
+            preference = preference_map.get(item["name"].casefold(), {})
+            weight_multiplier = preference.get("weight_multiplier", 1)
+            calorie_multiplier = preference.get("calorie_multiplier", 1)
+            note = "份量、热量及营养为 AI 估算，可直接保存，也可按实际食用量调整。"
+            if output.get("uncertainty_note"):
+                note += " " + output["uncertainty_note"]
+            food = FoodPayload(
+                id=str(uuid.uuid4()), name=item["name"], amount=amount * weight_multiplier,
+                basis_amount=amount, nutrition_basis="total", unit="g",
+                basis_kcal=item["calories_kcal"] * calorie_multiplier,
+                basis_protein_g=item["protein_g"], basis_carbs_g=item["carbs_g"], basis_fat_g=item["fat_g"],
+                source="ai_estimate", confidence=item.get("confidence"), uncertainty_note=note,
+                food_state=item.get("food_state", "unknown"),
+                evidence_photo_ids=[value for value in item.get("evidence_photo_ids", []) if value in request["photo_ids"]],
+                requires_portion=False,
+            )
+            items.append(food.model_dump())
+        return {
+            "items": items, "raw_result": output, "meal_id": request["meal_id"], "meal_version": request["meal_version"],
+            "photo_ids": request["photo_ids"], "model_name": configuration["model"] or "generic",
+            "model_version": raw.get("model", configuration["model"] or "unspecified"),
+            "needs_user_confirmation": True, "uncertainty_note": output.get("uncertainty_note", "请核对实际食用份量"),
+        }
+
+    def recognition_request(self, configuration, task, request, images, prompt):
         protocol = configuration["protocol"]
         if protocol == "generic":
             body = {"request_id": task["request_key"], "images": [base64.b64encode(value).decode() for value in images],
@@ -126,53 +195,7 @@ class AIService:
                     "max_output_tokens": configuration.get("max_output_tokens", 4096)}
             from .providers import normalized_ai_url
             url = normalized_ai_url(configuration["base_url"]) + "/responses"
-        async with httpx.AsyncClient(timeout=180, follow_redirects=False, trust_env=False) as client:
-            response = await client.post(url, headers=headers, json=body)
-            self.providers.check_response(response)
-            raw = response.json()
-        if protocol == "generic":
-            output = raw
-        elif protocol == "chat_completions":
-            output = json.loads(raw["choices"][0]["message"]["content"])
-        else:
-            output = self.parse_responses_output(raw)
-        try:
-            output = AIRecognitionOutput.model_validate(output).model_dump()
-        except ValidationError as error:
-            raise AppError("INVALID_AI_OUTPUT", "模型返回的份量或营养数据无效，请调整模型或手动记录") from error
-        items = []
-        with self.db.read() as repo:
-            preferences = repo.find("entities", {"user_id": task["user_id"], "kind": "food_preference", "deleted_at": None})
-        preference_map = {json.loads(row["payload"])["food_name"].casefold(): json.loads(row["payload"]) for row in preferences}
-        for item in output.get("items", [])[:100]:
-            amount = item.get("estimated_weight_g")
-            needs_portion = amount is None
-            if amount is not None and amount <= 0:
-                raise AppError("INVALID_AI_OUTPUT", "模型返回的食物份量无效，请重试")
-            amount = amount or 100
-            preference = preference_map.get(item["name"].casefold(), {})
-            weight_multiplier = preference.get("weight_multiplier", 1)
-            calorie_multiplier = preference.get("calorie_multiplier", 1)
-            food = FoodPayload(
-                id=str(uuid.uuid4()), name=item["name"], amount=amount * weight_multiplier,
-                basis_amount=amount, nutrition_basis="total", unit="g",
-                basis_kcal=item.get("calories_kcal") * calorie_multiplier if item.get("calories_kcal") is not None and not needs_portion else None,
-                basis_protein_g=None if needs_portion else item.get("protein_g"),
-                basis_carbs_g=None if needs_portion else item.get("carbs_g"),
-                basis_fat_g=None if needs_portion else item.get("fat_g"),
-                source="ai_estimate", confidence=item.get("confidence"),
-                uncertainty_note="模型无法可靠估算份量，请填写实际份量和营养依据" if needs_portion else output.get("uncertainty_note", "份量和营养为照片估算，请确认"),
-                food_state=item.get("food_state", "unknown"),
-                evidence_photo_ids=[value for value in item.get("evidence_photo_ids", []) if value in request["photo_ids"]],
-                requires_portion=needs_portion,
-            )
-            items.append(food.model_dump())
-        return {
-            "items": items, "raw_result": output, "meal_id": request["meal_id"], "meal_version": request["meal_version"],
-            "photo_ids": request["photo_ids"], "model_name": configuration["model"] or "generic",
-            "model_version": raw.get("model", configuration["model"] or "unspecified"),
-            "needs_user_confirmation": True, "uncertainty_note": output.get("uncertainty_note", "请核对实际食用份量"),
-        }
+        return body, url
 
     def parse_responses_output(self, response):
         if response.get("status") not in (None, "completed"):

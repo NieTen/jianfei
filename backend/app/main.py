@@ -67,7 +67,7 @@ def create_app(settings=None, run_jobs=True):
             finally:
                 service.release_instance()
 
-    application = FastAPI(title="并肩健康记录 API", version="0.1.7", lifespan=lifespan,
+    application = FastAPI(title="并肩健康记录 API", version="0.1.9", lifespan=lifespan,
                           docs_url="/api/docs", redoc_url=None)
     application.add_middleware(RequestGuard)
     application.include_router(router)

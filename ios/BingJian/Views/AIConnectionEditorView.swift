@@ -21,8 +21,13 @@ struct AIConnectionEditorView: View {
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
                 FormField(title: "API 密钥") {
-                    SecureField(model.aiHasServerKey && apiKey.isEmpty ? "后台已保存密钥，留空保持" : "API Key", text: $apiKey)
+                    SecureField(model.hasSavedAIKey(for: configuration) ? "已保存密钥，留空保持" : "API Key", text: $apiKey)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .accessibilityIdentifier("ai.key")
+                }
+                if model.hasSavedAIKey(for: configuration) {
+                    Text("已保存的密钥不回显。留空时，保存、读取模型和测试连接都会使用原密钥。")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Picker("调用方式", selection: $configuration.execution) {
                     Text("通过私有后台").tag("gateway")
@@ -92,7 +97,7 @@ struct AIConnectionEditorView: View {
             guard !loaded else { return }
             await model.hydrateAIConfiguration()
             configuration = model.aiConfiguration
-            apiKey = model.aiAPIKey()
+            apiKey = ""
             allowProcessing = model.externalAIConsent
             models = model.availableAIModels
             loaded = true

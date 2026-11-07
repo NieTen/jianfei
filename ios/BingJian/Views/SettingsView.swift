@@ -56,7 +56,7 @@ struct SettingsView: View {
                     Text("所有主动记录先保存到手机。个人同步、伙伴共享和外部 AI 处理分别控制。")
                     Text("导出文件由你保管密码。仅本机数据可通过加密导出包恢复，卸载前请确认备份。")
                     PrivacyNote()
-                    Text("并肩 · 0.1.8").font(.caption2)
+                    Text("并肩 · 0.1.9").font(.caption2).accessibilityIdentifier("page.end.settings")
                 }.font(.caption).foregroundStyle(Palette.secondary).padding(.horizontal, 4)
             }.padding(16).buttonStyle(.plain)
         }.background(Palette.canvas).navigationTitle("").navigationBarTitleDisplayMode(.inline)

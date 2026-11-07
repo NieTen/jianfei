@@ -59,7 +59,7 @@ struct DashboardView: View {
                     Spacer()
                     if model.pendingCount > 0 { Text("\(model.pendingCount) 待同步") }
                 }.font(.caption).foregroundStyle(Palette.secondary)
-                PrivacyNote()
+                PrivacyNote().accessibilityElement(children: .combine).accessibilityIdentifier("page.end.today")
             }.padding(.horizontal, 16).padding(.vertical, 18)
         }
         .background(Palette.canvas)

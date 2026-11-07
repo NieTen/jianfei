@@ -91,7 +91,7 @@ struct MealsView: View {
                 }
                 Button(model.summary.complete ? "撤回当日完成确认" : "确认当日记录完成") {
                     model.perform { try await model.markComplete(!model.summary.complete) }
-                }.buttonStyle(FilledActionStyle())
+                }.buttonStyle(FilledActionStyle()).accessibilityIdentifier("page.end.meals")
             }.padding(.horizontal, 16).padding(.vertical, 18)
         }
         .background(Palette.canvas)

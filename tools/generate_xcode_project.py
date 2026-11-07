@@ -90,7 +90,7 @@ def resources():
         "CFBundleDevelopmentRegion": "zh_CN", "CFBundleExecutable": "$(EXECUTABLE_NAME)",
         "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)", "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": "$(PRODUCT_NAME)", "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.1.8", "CFBundleVersion": "9",
+        "CFBundleShortVersionString": "0.1.9", "CFBundleVersion": "10",
         "NSHealthShareUsageDescription": "读取你授权的步数、消耗、体重、运动、心率和睡眠，用于个人记录与趋势分析。",
         "NSHealthUpdateUsageDescription": "健康数据以你的明确授权为前提，当前版本优先保存本机记录。",
     }
@@ -228,7 +228,7 @@ def main():
         settings = {
             "PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": bundle, "SDKROOT": sdk,
             "SWIFT_VERSION": "5.0", "SWIFT_STRICT_CONCURRENCY": "minimal", "CODE_SIGN_STYLE": "Automatic",
-            "CURRENT_PROJECT_VERSION": "9", "MARKETING_VERSION": "0.1.8", "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
+            "CURRENT_PROJECT_VERSION": "10", "MARKETING_VERSION": "0.1.9", "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
             "CLANG_ENABLE_MODULES": "YES", "GENERATE_INFOPLIST_FILE": "NO",
         }
         if name == "BingJianWatch":

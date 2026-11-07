@@ -81,6 +81,9 @@ struct MealEditorView: View {
                                         Text(item.name).foregroundStyle(.primary)
                                         Text(item.requiresPortion == true ? "重量待确认" : "预计 \(item.amount.concise) \(item.unit == "g" ? "克" : item.unit == "ml" ? "毫升" : "份")")
                                             .font(.caption).foregroundStyle(.secondary)
+                                        Text("蛋白质 \(item.protein?.concise ?? "—") g · 碳水 \(item.carbs?.concise ?? "—") g · 脂肪 \(item.fat?.concise ?? "—") g")
+                                            .font(.caption).foregroundStyle(Palette.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
                                     }
                                     Spacer()
                                     Text(item.kcal.map { "\($0.concise) kcal" } ?? "热量待补充").foregroundStyle(Palette.teal)
@@ -92,15 +95,18 @@ struct MealEditorView: View {
                             }
                         }
                         MealNutritionSummary(items: meal.items)
+                        if let note = meal.aiResult?.text("uncertainty_note"), !note.isEmpty {
+                            Text(note).font(.caption).foregroundStyle(Palette.secondary)
+                        }
                         Text("照片结果为估算，核对后点击保存即可计入当天记录。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 if recognizing {
-                    HStack { ProgressView(); Text("正在识别食物、重量和营养…") }
+                    HStack { ProgressView(); Text("正在识别并估算重量、热量和营养…") }
                     Button("停止等待") { recognitionTask?.cancel() }
                 } else if !meal.photoIds.isEmpty {
-                    Button(meal.items.isEmpty ? "重试识别" : "重新识别照片", systemImage: "arrow.clockwise") { startRecognition() }
+                    Button(meal.items.isEmpty ? "重试识别" : "重新估算重量与营养", systemImage: "arrow.clockwise") { startRecognition() }
                         .disabled(busy)
                 }
             }
@@ -312,7 +318,8 @@ struct MealEditorView: View {
                 let taskId = result.text("id")
                 guard !taskId.isEmpty else { throw APIError(code: "AI_TASK", message: "识别任务未创建，请重试") }
                 meal.aiTaskId = taskId
-                for _ in 0..<60 {
+                // 首次估算与一次自动补全各需等待，避免补全期间过早结束轮询。
+                for _ in 0..<130 {
                     try await Task.sleep(for: .seconds(3))
                     let task = try await model.pollRecognition(taskId)
                     try Task.checkCancellation()
@@ -378,7 +385,7 @@ struct MealNutritionSummary: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("本餐合计").font(.headline)
+                Text(items.contains(where: { $0.source == "ai_estimate" }) ? "本餐合计 · 估算" : "本餐合计").font(.headline)
                 Spacer()
                 Text(MealInput.nutrient(items, value: { $0.kcal }).map { "\($0.concise) kcal" } ?? "热量待补充")
                     .font(.headline).foregroundStyle(Palette.teal)

@@ -4,12 +4,13 @@ actor ResponsesClient {
     private let session: URLSession
     private var modelCache: [String: (Date, [AIModelOption])] = [:]
 
-    init() {
+    init(session: URLSession? = nil) {
+        if let session { self.session = session; return }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 180
         configuration.timeoutIntervalForResource = 210
         configuration.urlCache = nil
-        session = URLSession(configuration: configuration, delegate: NoRedirectDelegate(), delegateQueue: nil)
+        self.session = URLSession(configuration: configuration, delegate: NoRedirectDelegate(), delegateQueue: nil)
     }
 
     private func request(configuration: AIConfiguration, apiKey: String, path: String, body: JSONObject? = nil) async throws -> JSONObject {
@@ -54,9 +55,7 @@ actor ResponsesClient {
         }
         let schema = try JSONDecoder().decode(JSONObject.self, from: Data(contentsOf: schemaURL))
         let ids = photos.map(\.0)
-        let prompt = "识别同一餐的食物，多角度中的同一份食物只计算一次。返回 JSON，包含 items 和 uncertainty_note。" +
-            "每项返回名称、估算克数、该份量的总热量和三大营养素、置信度、生熟状态及照片证据标识。" +
-            "不能可靠判断的数值返回 null，无法识别返回空数组。照片标识 \(ids.joined(separator: ","))。用户说明 \(note)"
+        let prompt = try FoodRecognition.prompt(schema: schema, photoIds: ids, note: note)
         var content: [JSONValue] = [.object(["type": .string("input_text"), "text": .string(prompt)])]
         for (_, url) in photos {
             let data = try Data(contentsOf: url)
@@ -65,50 +64,30 @@ actor ResponsesClient {
         let format: JSONObject = configuration.structuredOutput
             ? ["type": .string("json_schema"), "name": .string("food_recognition"), "strict": .bool(true), "schema": .object(schema)]
             : ["type": .string("json_object")]
-        let response = try await request(configuration: configuration, apiKey: apiKey, path: "responses", body: [
-            "model": .string(configuration.model), "input": .array([.object(["role": .string("user"), "content": .array(content)])]),
-            "text": .object(["format": .object(format)]), "store": .bool(false),
-            "max_output_tokens": .number(Double(configuration.maxOutputTokens))
-        ])
-        if let status = response["status"]?.string, status != "completed" {
-            throw APIError(code: "AI_INCOMPLETE", message: "模型输出未完成，可在 AI 设置中增加输出上限或简化照片")
-        }
-        var texts: [String] = []
-        for message in response.objects("output") where message.text("type") == "message" {
-            for part in message.objects("content") {
-                if part.text("type") == "refusal" { throw APIError(code: "AI_REFUSAL", message: "模型未能识别，请手动记录或更换照片") }
-                if part.text("type") == "output_text" { texts.append(part.text("text")) }
-            }
-        }
-        if texts.isEmpty, let text = response["output_text"]?.string { texts.append(text) }
-        guard !texts.isEmpty else { throw APIError(code: "AI_EMPTY", message: "模型未返回可用食物结果") }
-        let output = try JSONDecoder().decode(JSONObject.self, from: Data(texts.joined().utf8))
-        guard output["items"]?.array != nil else { throw APIError(code: "AI_FORMAT", message: "模型结果不符合识别格式") }
+        var response: JSONObject = [:]
+        var output: JSONObject = [:]
         var foods: [FoodItem] = []
-        for item in output.objects("items").prefix(100) {
-            let name = item.text("name")
-            guard !name.isEmpty else { throw APIError(code: "AI_FORMAT", message: "候选食物名称缺失") }
-            let weight = item.number("estimated_weight_g")
-            if let weight, weight <= 0 { throw APIError(code: "AI_FORMAT", message: "候选食物份量无效") }
-            let preference = preferences.first { $0.foodName.localizedCaseInsensitiveCompare(name) == .orderedSame }
-            let amount = weight ?? 100
-            var food = FoodItem(name: name, amount: amount * (preference?.weightMultiplier ?? 1),
-                                basisAmount: amount, nutritionBasis: "total",
-                                basisKcal: weight == nil ? nil : item.number("calories_kcal").map { $0 * (preference?.calorieMultiplier ?? 1) },
-                                basisProteinG: weight == nil ? nil : item.number("protein_g"),
-                                basisCarbsG: weight == nil ? nil : item.number("carbs_g"),
-                                basisFatG: weight == nil ? nil : item.number("fat_g"), source: "ai_estimate",
-                                confidence: item.number("confidence"), uncertaintyNote: output.text("uncertainty_note"),
-                                foodState: item.text("food_state", fallback: "unknown"),
-                                evidencePhotoIds: item.strings("evidence_photo_ids").filter { ids.contains($0) })
-            food.requiresPortion = weight == nil
-            if weight == nil { food.uncertaintyNote = "份量无法可靠估算，请填写实际份量及营养依据" }
-            try RecordValidator.food(food)
-            foods.append(food)
+        for attempt in 0..<2 {
+            try Task.checkCancellation()
+            response = try await request(configuration: configuration, apiKey: apiKey, path: "responses", body: [
+                "model": .string(configuration.model), "input": .array([.object(["role": .string("user"), "content": .array(content)])]),
+                "text": .object(["format": .object(format)]), "store": .bool(false),
+                "max_output_tokens": .number(Double(configuration.maxOutputTokens))
+            ])
+            output = try FoodRecognition.parse(response)
+            do {
+                foods = try FoodRecognition.foods(output, photoIds: ids, preferences: preferences)
+                break
+            } catch let error as APIError where ["AI_NUTRITION_INCOMPLETE", "AI_FORMAT"].contains(error.code) {
+                guard attempt == 0 else {
+                    throw APIError(code: "AI_NUTRITION_INCOMPLETE", message: "AI 自动补全后仍未提供完整份量与营养，请重试或更换支持图像营养估算的模型")
+                }
+                content.append(.object(["type": .string("input_text"), "text": .string(try FoodRecognition.completionPrompt(output))]))
+            }
         }
         return ["items": .array(try foods.map { .object(try Codec.object($0)) }), "raw_result": .object(output),
                 "model_name": .string(configuration.model), "model_version": .string(response.text("model", fallback: configuration.model)),
                 "meal_version": .number(Double(mealVersion)), "needs_user_confirmation": .bool(true),
-                "uncertainty_note": output["uncertainty_note"] ?? .string("请核对份量和营养")]
+                "uncertainty_note": output["uncertainty_note"] ?? .string("份量与营养为 AI 估算，请核对实际食用量")]
     }
 }

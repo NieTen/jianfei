@@ -21,6 +21,7 @@ from app.config import Settings
 from app.main import create_app
 from app.models import RecognitionRequest
 from app.errors import AppError
+from app.domain import food_totals
 from app.providers import ProviderService, normalized_ai_url
 from app.cli import pairing, restore
 from app.runtime import Runtime
@@ -382,17 +383,36 @@ class APITests(unittest.TestCase):
             self.service.providers.check_response(httpx.Response(401, text="secret-server-debug"))
         self.assertNotIn("secret-server-debug", caught.exception.message)
 
-    def test_responses_request_and_missing_portion_are_preserved(self):
+    def test_changing_model_without_key_reuses_saved_credential_for_models(self):
+        self.configure_ai()
+        changed = self.configure_ai(model="new-vision", api_key=None)
+        self.assertTrue(changed["has_api_key"])
+        self.assertNotIn("api_key", changed)
+        self.assertEqual(self.service.providers.configuration(self.user["user_id"])["api_key"], "test-key-only")
+        calls = []
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(200, json={"data": [{"id": "new-vision"}]})
+        factory = httpx.AsyncClient
+        with patch("app.providers.httpx.AsyncClient", side_effect=lambda **kwargs: factory(transport=httpx.MockTransport(handler))):
+            response = self.client.get("/api/v1/ai/models?refresh=true", headers=self.headers())
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(calls[0].headers["Authorization"], "Bearer test-key-only")
+
+    def test_responses_missing_portion_and_macros_are_completed_automatically(self):
         self.configure_ai()
         task = self.recognition_task()
         requests = []
         result = {"items": [{"name": "待确认食物", "estimated_weight_g": None, "calories_kcal": 999,
                              "confidence": 0.4}], "uncertainty_note": "份量未知"}
+        complete = {"items": [{"name": "鸡肉饭", "estimated_weight_g": 350, "calories_kcal": 620,
+                                "protein_g": 32, "carbs_g": 78, "fat_g": 20, "confidence": 0.6}],
+                    "uncertainty_note": "按一碗普通份量估算，包含常见烹饪用油"}
         def handler(request):
             requests.append(request)
             return httpx.Response(200, json={"status": "completed", "model": "test-vision-version",
                 "output": [{"type": "reasoning", "summary": []},
-                           {"type": "message", "content": [{"type": "output_text", "text": json.dumps(result)}]}]})
+                           {"type": "message", "content": [{"type": "output_text", "text": json.dumps(result if len(requests) == 1 else complete)}]}]})
         factory = httpx.AsyncClient
         with patch("app.ai.httpx.AsyncClient", side_effect=lambda **kwargs: factory(transport=httpx.MockTransport(handler))):
             value = asyncio.run(self.service.ai.process(task))
@@ -406,8 +426,118 @@ class APITests(unittest.TestCase):
         self.assertFalse(body["store"])
         self.assertEqual(value["meal_version"], 3)
         self.assertTrue(value["needs_user_confirmation"])
-        self.assertTrue(value["items"][0]["requires_portion"])
-        self.assertIsNone(value["items"][0]["basis_kcal"])
+        self.assertEqual(len(requests), 2)
+        self.assertNotEqual(requests[0].headers["Idempotency-Key"], requests[1].headers["Idempotency-Key"])
+        retry = json.loads(requests[1].content)
+        self.assertEqual(retry["input"][0]["content"][1], body["input"][0]["content"][1])
+        self.assertIn("上次结果", retry["input"][0]["content"][0]["text"])
+        food = value["items"][0]
+        self.assertFalse(food["requires_portion"])
+        self.assertEqual([food[key] for key in ("amount", "basis_amount", "basis_kcal", "basis_protein_g", "basis_carbs_g", "basis_fat_g")],
+                         [350, 350, 620, 32, 78, 20])
+        self.assertIn("AI 估算", food["uncertainty_note"])
+        # 修复后的候选可直接确认保存，不再要求用户填写重量或营养。
+        saved = self.push([self.mutation(kind="meal", payload={
+            "eaten_at": datetime.now(timezone.utc).isoformat(), "status": "confirmed", "items": value["items"],
+        })])[0]
+        self.assertEqual(saved["status"], "accepted")
+
+    def process_ai_results(self, task, results, after_first=None):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            if len(requests) == 1 and after_first:
+                after_first()
+            output = results[min(len(requests) - 1, len(results) - 1)]
+            return httpx.Response(200, json={"status": "completed", "output_text": json.dumps(output)})
+        factory = httpx.AsyncClient
+        with patch("app.ai.httpx.AsyncClient", side_effect=lambda **kwargs: factory(transport=httpx.MockTransport(handler))):
+            return asyncio.run(self.service.ai.process(task)), requests
+
+    def test_responses_complete_nutrition_uses_one_request_in_both_output_modes(self):
+        complete = {"items": [{"name": "鸡肉饭", "estimated_weight_g": 350, "calories_kcal": 620,
+                               "protein_g": 32, "carbs_g": 78, "fat_g": 20}]}
+        for strict in (True, False):
+            with self.subTest(strict=strict):
+                self.configure_ai(structured_output=strict)
+                value, requests = self.process_ai_results(self.recognition_task(), [complete])
+                self.assertEqual(len(requests), 1)
+                body = json.loads(requests[0].content)
+                self.assertEqual(body["text"]["format"]["type"], "json_schema" if strict else "json_object")
+                for field in ("estimated_weight_g", "calories_kcal", "protein_g", "carbs_g", "fat_g"):
+                    self.assertIn(field, body["input"][0]["content"][0]["text"])
+                self.assertEqual(value["items"][0]["basis_kcal"], 620)
+                self.assertEqual(value["items"][0]["basis_amount"], 350)
+
+    def test_responses_missing_nutrition_never_becomes_zero_or_default_weight(self):
+        self.configure_ai(structured_output=False)
+        task = self.recognition_task()
+        calls = []
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(200, json={"output_text": json.dumps({
+                "items": [{"name": "鸡肉饭", "estimated_weight_g": 350, "calories_kcal": 620}]
+            })})
+        factory = httpx.AsyncClient
+        with patch("app.ai.httpx.AsyncClient", side_effect=lambda **kwargs: factory(transport=httpx.MockTransport(handler))):
+            with self.assertRaises(AppError) as caught:
+                asyncio.run(self.service.ai.process(task))
+        self.assertEqual(caught.exception.code, "AI_NUTRITION_INCOMPLETE")
+        self.assertEqual(len(calls), 2)
+
+    def test_responses_invalid_numeric_types_are_completed_not_coerced(self):
+        self.configure_ai()
+        complete = {"name": "鸡肉饭", "estimated_weight_g": 350, "calories_kcal": 620,
+                    "protein_g": 32, "carbs_g": 78, "fat_g": 20}
+        for bad in (True, "620 kcal", "620", -1):
+            with self.subTest(value=bad):
+                first = {**complete, "calories_kcal": bad}
+                value, requests = self.process_ai_results(self.recognition_task(), [{"items": [first]}, {"items": [complete]}])
+                self.assertEqual(len(requests), 2)
+                self.assertEqual(value["items"][0]["basis_kcal"], 620)
+
+    def test_responses_zero_nutrients_and_no_food_are_valid(self):
+        self.configure_ai()
+        for items in ([], [{"name": "水", "estimated_weight_g": 250, "calories_kcal": 0,
+                           "protein_g": 0, "carbs_g": 0, "fat_g": 0}]):
+            with self.subTest(items=items):
+                value, requests = self.process_ai_results(self.recognition_task(), [{"items": items}])
+                self.assertEqual(len(requests), 1)
+                self.assertEqual(len(value["items"]), len(items))
+                if items:
+                    self.assertEqual(value["items"][0]["basis_kcal"], 0)
+
+    def test_estimated_total_nutrition_applies_personal_adjustments_once(self):
+        self.configure_ai()
+        saved = self.push([self.mutation(kind="food_preference", payload={
+            "food_name": "鸡肉饭", "weight_multiplier": 1.5, "calorie_multiplier": 1.2,
+        })])[0]
+        self.assertEqual(saved["status"], "accepted")
+        complete = {"items": [{"name": "鸡肉饭", "estimated_weight_g": 350, "calories_kcal": 620,
+                               "protein_g": 32, "carbs_g": 78, "fat_g": 20}]}
+        value, requests = self.process_ai_results(self.recognition_task(), [complete])
+        self.assertEqual(len(requests), 1)
+        food = value["items"][0]
+        self.assertEqual(food["amount"], 525)
+        self.assertEqual(food["basis_amount"], 350)
+        self.assertEqual(food_totals(food), {"kcal": 1116, "protein_g": 48, "carbs_g": 117, "fat_g": 30})
+
+    def test_cancel_or_provider_change_prevents_nutrition_completion_request(self):
+        for action in ("cancel", "provider"):
+            with self.subTest(action=action):
+                self.configure_ai()
+                task = self.recognition_task()
+                calls = []
+                def stop():
+                    calls.append(action)
+                    if action == "cancel":
+                        self.service.ai.cancel(self.actor(), task["id"])
+                    else:
+                        self.configure_ai(model="changed-model", api_key=None)
+                with self.assertRaises(AppError) as caught:
+                    self.process_ai_results(task, [{"items": [{"name": "鸡肉饭"}]}], after_first=stop)
+                self.assertIn(caught.exception.code, ("TASK_CANCELLED", "PROVIDER_CHANGED"))
+                self.assertEqual(len(calls), 1)
 
     def test_responses_negative_nutrition_is_rejected(self):
         self.configure_ai(structured_output=False)

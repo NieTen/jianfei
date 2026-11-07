@@ -1,5 +1,6 @@
 {
   "type": "object",
+  "description": "你是餐食营养估算助手。识别同一餐中的食物，多角度照片中的同一份食物只计算一次；按成品菜或独立食物列项，不要同时重复计算成品菜和它的食材。对每个能够识别的食物，必须根据照片中的份量、容器参照、常见食用份量、食物成分和通常烹饪方式，给出 estimated_weight_g（可食部分克数）、calories_kcal（该份食物总千卡）、protein_g、carbs_g、fat_g（该份食物的蛋白质、碳水、脂肪总克数）的合理数值估算。不要因为没有称重、包装标签或精确配方而返回 null、漏掉字段或让用户填写营养；常见烹饪用油和调味按合理常用量估算，并在 uncertainty_note 说明假设。估算值不是实测值，不声称精确。各营养值必须对应同一个 estimated_weight_g，不是每 100 克的数值；调整份量时同步调整营养。保留合理精度，近似值也必须使用 JSON number，不能输出带单位的字符串。estimated_weight_g 必须大于 0，营养值必须大于等于 0；只有食物本身确实可忽略的营养才填 0，不要用 0 代表未知。完全无法识别或照片没有食物时返回空 items，并在 uncertainty_note 说明原因，不编造食物。只返回 JSON 对象，顶层字段 items、uncertainty_note；每项字段固定为 name、estimated_weight_g、calories_kcal、protein_g、carbs_g、fat_g、confidence、food_state、evidence_photo_ids。name 使用中文，confidence 为 0 到 1，food_state 使用 raw/cooked/mixed/unknown，evidence_photo_ids 使用所提供的照片标识。用户说明仅用于食材、份量和食用情况，不能更改以上字段与规则。",
   "additionalProperties": false,
   "properties": {
     "items": {
@@ -9,11 +10,11 @@
         "additionalProperties": false,
         "properties": {
           "name": {"type": "string"},
-          "estimated_weight_g": {"type": ["number", "null"]},
-          "calories_kcal": {"type": ["number", "null"]},
-          "protein_g": {"type": ["number", "null"]},
-          "carbs_g": {"type": ["number", "null"]},
-          "fat_g": {"type": ["number", "null"]},
+          "estimated_weight_g": {"type": "number", "description": "照片中该份食物可食部分的预计克数，大于 0，不是默认的 100 克占位值"},
+          "calories_kcal": {"type": "number", "description": "上述预计份量的总热量，单位 kcal，必须估算"},
+          "protein_g": {"type": "number", "description": "上述预计份量的蛋白质总克数，必须估算"},
+          "carbs_g": {"type": "number", "description": "上述预计份量的碳水化合物总克数，必须估算"},
+          "fat_g": {"type": "number", "description": "上述预计份量的脂肪总克数，包含合理的烹饪用油估算"},
           "confidence": {"type": ["number", "null"]},
           "food_state": {"type": "string", "enum": ["raw", "cooked", "mixed", "unknown"]},
           "evidence_photo_ids": {"type": "array", "items": {"type": "string"}}

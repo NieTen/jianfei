@@ -27,12 +27,12 @@ def actor(request: Request, authorization: str | None = Header(default=None)):
 
 @router.get("/health")
 def health():
-    return {"status": "ok", "version": "0.1.7", "registration_requires_code": False}
+    return {"status": "ok", "version": "0.1.9", "registration_requires_code": False}
 
 
 @router.get("/version")
 def version():
-    return {"version": "0.1.7", "api_version": 1, "minimum_client": 1, "maximum_client": 1}
+    return {"version": "0.1.9", "api_version": 1, "minimum_client": 1, "maximum_client": 1}
 
 
 @router.get("/server-info")
@@ -45,7 +45,7 @@ def capabilities(request: Request, identity=Depends(actor)):
     service = runtime(request)
     return {**service.records.handshake(identity), "ai": service.ai.provider_info(identity["user_id"]),
             "push_available": service.push.configured(), "food_database_available": bool(service.settings.food_api_key),
-            "max_members": 8, "max_photos": 6, "ai_timeout_seconds": 180}
+            "max_members": 8, "max_photos": 6, "ai_timeout_seconds": 360}
 
 
 @router.post("/auth/register")

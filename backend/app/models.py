@@ -138,6 +138,9 @@ class MealPayload(InputModel):
 
 
 class AIResultItem(InputModel):
+    # 模型必须返回真正的数值，避免把布尔值、带单位的字符串当作营养值。
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, strict=True)
+
     name: str = Field(min_length=1, max_length=200)
     estimated_weight_g: float | None = Field(default=None, gt=0, le=100000)
     calories_kcal: float | None = Field(default=None, ge=0, le=100000)

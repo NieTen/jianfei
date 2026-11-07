@@ -55,6 +55,7 @@ struct CommunityView: View {
                 }
                 if model.challenges.isEmpty {
                     EmptyRecordsView(title: "还没有挑战", message: "双方分别确认规则和共享范围后，挑战才会开始。", symbol: "person.2.circle")
+                        .accessibilityElement(children: .combine).accessibilityIdentifier("page.end.community")
                 }
             }.padding(16)
         }

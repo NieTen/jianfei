@@ -135,7 +135,7 @@ struct TrendsView: View {
                         }
                     }
                 }
-                PrivacyNote()
+                PrivacyNote().accessibilityElement(children: .combine).accessibilityIdentifier("page.end.trends")
             }.padding(.horizontal, 16).padding(.vertical, 18)
         }
         .background(Palette.canvas).navigationTitle("").navigationBarTitleDisplayMode(.inline)

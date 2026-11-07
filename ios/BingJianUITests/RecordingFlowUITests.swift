@@ -73,5 +73,23 @@ final class RecordingFlowUITests: XCTestCase {
         XCTAssertTrue(pickerLoaded, "照片库加载完成后，多选照片选择器应提供添加操作")
         cancel.tap()
         XCTAssertTrue(app.buttons["meal.photos"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons["关闭"].tap()
+        // 滚动到真实页面末尾，检查文字和操作区域均在自定义菜单上方。
+        for tab in ["today", "meals", "trends", "community", "settings"] {
+            app.buttons["tab.\(tab)"].tap()
+            let end = app.descendants(matching: .any).matching(identifier: "page.end.\(tab)").firstMatch
+            let scroll = app.scrollViews.firstMatch
+            XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+            for _ in 0..<8 {
+                if end.exists && end.isHittable && end.frame.maxY < app.buttons["tab.today"].frame.minY { break }
+                scroll.swipeUp()
+            }
+            XCTAssertTrue(end.exists && end.isHittable, "\(tab) 页面底部应可见")
+            XCTAssertLessThanOrEqual(end.frame.maxY, app.buttons["tab.today"].frame.minY, "\(tab) 页面末尾不能被菜单覆盖")
+            let image = XCTAttachment(screenshot: app.screenshot())
+            image.name = "页面底部-\(tab)"
+            image.lifetime = .keepAlways
+            add(image)
+        }
     }
 }

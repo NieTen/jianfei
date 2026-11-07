@@ -39,6 +39,10 @@ final class AppearanceTests: XCTestCase {
             try await capture(MainTabs(selection: .constant(tab)), model: model,
                               name: "\(tab)-large-text", largeText: true)
         }
+        for tab in ["today", "meals", "trends", "community", "settings"] {
+            try await capture(MainTabs(selection: .constant(tab)), model: model,
+                              name: "\(tab)-bottom-large-text", largeText: true, scrollToBottom: true)
+        }
         try await capture(OnboardingView(), model: model, name: "welcome-large-text", largeText: true)
         try await capture(MainTabs(selection: .constant("today")), model: model,
                           name: "today-small-screen", compact: true)
@@ -109,7 +113,8 @@ final class AppearanceTests: XCTestCase {
 
     @MainActor
     private func capture<Content: View>(_ content: Content, model: AppModel, name: String,
-                                       dark: Bool = false, largeText: Bool = false, compact: Bool = false) async throws {
+                                       dark: Bool = false, largeText: Bool = false, compact: Bool = false,
+                                       scrollToBottom: Bool = false) async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previousWindow = scene.windows.first(where: \.isKeyWindow)
         let window = UIWindow(windowScene: scene)
@@ -131,6 +136,13 @@ final class AppearanceTests: XCTestCase {
         // 等待 SwiftUI 布局、原生导航栏和异步趋势计算完成后采集。
         try await Task.sleep(for: .seconds(2))
         controller.view.layoutIfNeeded()
+        if scrollToBottom, let scroll = verticalScroll(in: controller.view, window: window) {
+            let bottom = max(-scroll.adjustedContentInset.top,
+                             scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+            scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: bottom), animated: false)
+            try await Task.sleep(for: .milliseconds(350))
+            controller.view.layoutIfNeeded()
+        }
         let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
         let image = renderer.image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
         let data = try XCTUnwrap(image.pngData())
@@ -143,5 +155,16 @@ final class AppearanceTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    private func verticalScroll(in view: UIView, window: UIWindow) -> UIScrollView? {
+        guard !view.isHidden, view.alpha > 0, view.convert(view.bounds, to: window).intersects(window.bounds) else { return nil }
+        if let scroll = view as? UIScrollView, scroll.bounds.width > 200,
+           scroll.contentSize.height > scroll.bounds.height + 1 { return scroll }
+        for child in view.subviews {
+            if let scroll = verticalScroll(in: child, window: window) { return scroll }
+        }
+        return nil
     }
 }
