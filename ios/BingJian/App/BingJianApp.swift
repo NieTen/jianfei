@@ -64,14 +64,41 @@ struct MainTabs: View {
     @Binding var selection: String
     var body: some View {
         TabView(selection: $selection) {
-            NavigationStack { DashboardView() }.tabItem { Label("今天", systemImage: "sun.max") }.tag("today")
-            NavigationStack { MealsView() }.tabItem { Label("饮食", systemImage: "fork.knife") }.tag("meals")
-            NavigationStack { TrendsView() }.tabItem { Label("趋势", systemImage: "chart.xyaxis.line") }.tag("trends")
-            NavigationStack { CommunityView() }.tabItem { Label("伙伴", systemImage: "person.2") }.tag("community")
-            NavigationStack { SettingsView() }.tabItem { Label("我的", systemImage: "person.crop.circle") }.tag("settings")
+            NavigationStack { DashboardView() }.toolbar(.hidden, for: .tabBar).tabItem { Label("今天", systemImage: "sun.max") }.tag("today")
+            NavigationStack { MealsView() }.toolbar(.hidden, for: .tabBar).tabItem { Label("饮食", systemImage: "fork.knife") }.tag("meals")
+            NavigationStack { TrendsView() }.toolbar(.hidden, for: .tabBar).tabItem { Label("趋势", systemImage: "chart.xyaxis.line") }.tag("trends")
+            NavigationStack { CommunityView() }.toolbar(.hidden, for: .tabBar).tabItem { Label("伙伴", systemImage: "person.2") }.tag("community")
+            NavigationStack { SettingsView() }.toolbar(.hidden, for: .tabBar).tabItem { Label("我的", systemImage: "person.crop.circle") }.tag("settings")
         }
-        .toolbarBackground(Palette.card, for: .tabBar)
-        .toolbarBackground(.visible, for: .tabBar)
+        .safeAreaInset(edge: .bottom, spacing: 0) { AppTabBar(selection: $selection) }
         .toolbarBackground(Palette.canvas, for: .navigationBar)
+    }
+}
+
+struct AppTabBar: View {
+    @Binding var selection: String
+    @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 23
+    private let items = [("today", "今天", "sun.max.fill"), ("meals", "饮食", "fork.knife"),
+                         ("trends", "趋势", "chart.xyaxis.line"), ("community", "伙伴", "person.2.fill"),
+                         ("settings", "我的", "person.crop.circle.fill")]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(items, id: \.0) { item in
+                Button { selection = item.0 } label: {
+                    VStack(spacing: 5) {
+                        Image(systemName: item.2).font(.system(size: iconSize, weight: .medium))
+                        Text(item.1).font(.caption2.weight(selection == item.0 ? .semibold : .regular)).lineLimit(1).minimumScaleFactor(0.8)
+                    }.padding(.horizontal, 13).padding(.vertical, 8)
+                        .foregroundStyle(selection == item.0 ? Palette.teal : Palette.secondary)
+                        .background(selection == item.0 ? Palette.soft : .clear, in: RoundedRectangle(cornerRadius: 18))
+                        .frame(maxWidth: .infinity, minHeight: 54)
+                }.buttonStyle(.plain).accessibilityLabel(item.1)
+                    .accessibilityAddTraits(selection == item.0 ? .isSelected : [])
+                    .accessibilityIdentifier("tab.\(item.0)")
+            }
+        }.padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 2)
+            .background { Palette.card.ignoresSafeArea(edges: .bottom) }
+            .overlay(alignment: .top) { Rectangle().fill(Palette.border.opacity(0.65)).frame(height: 0.5) }
     }
 }

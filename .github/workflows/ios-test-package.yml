@@ -1,28 +1,14 @@
 name: iOS 测试包与界面验收
 
-# 客户端相关变更自动验证，文档变更不会占用云端 Mac。
+# 按用户要求，页面调整期间不随提交打包；确认完成后手动运行。
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'ios/**'
-      - 'tools/generate_xcode_project.py'
-      - 'tools/check_simulator_entitlements.py'
-      - 'tools/prepare_ios_resigning.py'
-      - 'tools/check_ios_health_entitlements.py'
-      - 'backend/app/resources/food_schema.json'
-      - '.github/workflows/ios-test-package.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'ios/**'
-      - 'tools/generate_xcode_project.py'
-      - 'tools/check_simulator_entitlements.py'
-      - 'tools/prepare_ios_resigning.py'
-      - 'tools/check_ios_health_entitlements.py'
-      - 'backend/app/resources/food_schema.json'
-      - '.github/workflows/ios-test-package.yml'
   workflow_dispatch:
+    inputs:
+      create_packages:
+        description: '已确认改动完成，生成手机与模拟器测试包'
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -71,6 +57,7 @@ jobs:
             build 2>&1 | tee build/xcodebuild.log
 
       - name: 生成待签名 IPA
+        if: inputs.create_packages
         run: |
           set -euo pipefail
           app_path='build/DerivedData/Build/Products/Release-iphoneos/BingJian.app'
@@ -100,6 +87,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 保存待签名测试包
+        if: inputs.create_packages
         uses: actions/upload-artifact@v7
         with:
           name: BingJian-unsigned-${{ github.run_number }}
@@ -147,7 +135,7 @@ jobs:
           xcrun simctl boot "$simulator_id"
           xcrun simctl bootstatus "$simulator_id" -b
 
-      - name: 编译并打包浏览器模拟器应用
+      - name: 编译浏览器模拟器应用
         run: |
           set -o pipefail
           xcodebuild \
@@ -168,6 +156,12 @@ jobs:
           codesign --verify --deep --strict "$app_path"
           codesign -dv "$app_path" 2> build/simulator-signature.log
           python3 tools/check_simulator_entitlements.py "$app_path" --output build/simulator-entitlements.plist
+
+      - name: 生成浏览器模拟器包
+        if: inputs.create_packages
+        run: |
+          set -euo pipefail
+          app_path=build/SimulatorData/Build/Products/Debug-iphonesimulator/BingJian.app
           ditto -c -k --keepParent "$app_path" build/BingJian-simulator.zip
           unzip -t build/BingJian-simulator.zip
 
@@ -203,10 +197,10 @@ jobs:
             fi
           fi
 
-      - name: 保存模拟器包与页面截图
+      - name: 保存页面截图与可选模拟器包
         uses: actions/upload-artifact@v7
         with:
-          name: BingJian-simulator-${{ github.run_number }}
+          name: BingJian-${{ inputs.create_packages && 'simulator' || 'ui-preview' }}-${{ github.run_number }}
           path: |
             build/BingJian-simulator.zip
             build/ui-preview

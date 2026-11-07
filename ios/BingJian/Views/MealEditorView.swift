@@ -391,9 +391,9 @@ struct MealNutritionSummary: View {
         }.padding(.vertical, 8)
     }
     @ViewBuilder private var nutrients: some View {
-        MetricView(title: "蛋白质", value: MealInput.nutrient(items, value: { $0.protein }), unit: "g")
-        MetricView(title: "碳水", value: MealInput.nutrient(items, value: { $0.carbs }), unit: "g")
-        MetricView(title: "脂肪", value: MealInput.nutrient(items, value: { $0.fat }), unit: "g")
+        MetricView(title: "蛋白质", value: MealInput.nutrient(items, value: { $0.protein }), unit: "g", color: Palette.teal)
+        MetricView(title: "碳水", value: MealInput.nutrient(items, value: { $0.carbs }), unit: "g", color: Palette.peach)
+        MetricView(title: "脂肪", value: MealInput.nutrient(items, value: { $0.fat }), unit: "g", color: Palette.purple)
     }
 }
 

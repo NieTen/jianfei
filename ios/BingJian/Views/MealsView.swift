@@ -7,8 +7,8 @@ struct MealsView: View {
     @State private var editing: AppRecord?
     var body: some View {
         ScrollView {
-            VStack(spacing: 22) {
-                PageHeading(title: "好好吃，也好好记", subtitle: "从每一餐，了解自己的饮食节奏。")
+            VStack(spacing: 18) {
+                PageHeading(title: "好好吃，也好好记", subtitle: "从每一餐，了解自己的饮食节奏。", artwork: .food)
                 DateStrip()
                 Button { newMeal = MealComposerRoute() } label: {
                     Label("记录这一餐", systemImage: "plus")
@@ -18,12 +18,12 @@ struct MealsView: View {
                         Label("营养记录", systemImage: "leaf").font(.headline).foregroundStyle(Palette.ink)
                         Spacer()
                         StatusPill(title: model.summary.complete ? "已确认" : "记录中",
-                                   symbol: model.summary.complete ? "checkmark" : "pencil")
+                                   symbol: model.summary.complete ? "checkmark" : "pencil", background: Palette.lime)
                     }
                     nutrientLayout {
-                        MetricView(title: "蛋白质", value: model.summary.protein, unit: "g")
-                        MetricView(title: "碳水", value: model.summary.carbs, unit: "g")
-                        MetricView(title: "脂肪", value: model.summary.fat, unit: "g")
+                        MetricView(title: "蛋白质", value: model.summary.protein, unit: "g", color: Palette.teal)
+                        MetricView(title: "碳水", value: model.summary.carbs, unit: "g", color: Palette.peach)
+                        MetricView(title: "脂肪", value: model.summary.fat, unit: "g", color: Palette.purple)
                     }
                     if !model.summary.missingNutrients.isEmpty {
                         HintLabel(text: "已知部分合计。待补充 \(model.summary.missingNutrients.joined(separator: "、"))")
@@ -34,7 +34,7 @@ struct MealsView: View {
                         Button { editing = record } label: {
                             Surface {
                                 HStack(alignment: .top, spacing: 12) {
-                                    SymbolBadge(symbol: mealSymbol(meal.mealType))
+                                    SymbolBadge(symbol: mealSymbol(meal.mealType), color: meal.mealType == "dinner" ? Palette.purple : Palette.peach)
                                     VStack(alignment: .leading, spacing: 5) {
                                         HStack {
                                             Text(MealTypes.name(meal.mealType)).font(.headline).foregroundStyle(Palette.ink)
@@ -92,12 +92,15 @@ struct MealsView: View {
                 Button(model.summary.complete ? "撤回当日完成确认" : "确认当日记录完成") {
                     model.perform { try await model.markComplete(!model.summary.complete) }
                 }.buttonStyle(FilledActionStyle())
-            }.padding(20)
+            }.padding(.horizontal, 16).padding(.vertical, 18)
         }
         .background(Palette.canvas)
-        .navigationTitle("饮食")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { Button("记录", systemImage: "plus") { newMeal = MealComposerRoute() } }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) { Text("饮食").font(.title3.weight(.bold)).foregroundStyle(Palette.ink) }
+            ToolbarItem(placement: .topBarTrailing) { Button("记录", systemImage: "plus") { newMeal = MealComposerRoute() } }
+        }
         .sheet(item: $newMeal) { route in NavigationStack { MealEditorView(initialMealType: route.mealType) } }
         .sheet(item: $editing) { record in NavigationStack { MealEditorView(existing: record) } }
     }
@@ -108,9 +111,9 @@ struct MealsView: View {
 
     private func mealSymbol(_ type: String) -> String {
         switch type {
-        case "breakfast": return "sun.horizon"
-        case "lunch": return "sun.max"
-        case "dinner": return "moon"
+        case "breakfast": return "cup.and.saucer.fill"
+        case "lunch": return "fork.knife"
+        case "dinner": return "moon.stars.fill"
         default: return "cup.and.saucer"
         }
     }

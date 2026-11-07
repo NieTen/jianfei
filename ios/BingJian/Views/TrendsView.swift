@@ -14,6 +14,7 @@ struct TrendsView: View {
     @State private var loading = false
     @State private var weightTrend = TrendResult(points: [], averages: [])
     @State private var intakeTrend = TrendResult(points: [], averages: [])
+    @State private var visibleCharts = "both"
 
     private let metrics = [
         ("weight", "体重"), ("intake", "摄入"), ("expenditure", "消耗"), ("deficit", "能量差额"),
@@ -23,17 +24,34 @@ struct TrendsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 22) {
-                PageHeading(title: "看见一点点变化", subtitle: "拉长时间，观察属于自己的节奏。")
-                Picker("时间范围", selection: $days) {
-                    Text("7天").tag(7); Text("30天").tag(30); Text("90天").tag(90); Text("1年").tag(365); Text("自定义").tag(0)
-                }.pickerStyle(.segmented)
+            VStack(spacing: 18) {
+                PageHeading(title: "看见一点点变化", subtitle: "拉长时间，观察属于自己的节奏。", artwork: .trend)
+                Menu {
+                    Picker("显示图表", selection: $visibleCharts) {
+                        Text("体重与摄入").tag("both")
+                        Text("体重").tag("weight")
+                        Text("摄入热量").tag("intake")
+                    }
+                } label: {
+                    HStack {
+                        Label(visibleCharts == "both" ? "体重与摄入" : visibleCharts == "weight" ? "体重" : "摄入热量", systemImage: "chart.xyaxis.line")
+                        Image(systemName: "chevron.down").font(.caption.weight(.semibold))
+                        Spacer()
+                    }.font(.subheadline.weight(.semibold)).foregroundStyle(Palette.teal)
+                        .padding(.horizontal, 16).frame(minHeight: 44)
+                        .background(Palette.soft, in: RoundedRectangle(cornerRadius: 18))
+                }.accessibilityLabel("选择显示的趋势图")
+                TrendRangeButtons(selection: $days)
                 if days == 0 {
                     DatePicker("开始", selection: $customStart, in: ...customEnd, displayedComponents: .date)
                     DatePicker("结束", selection: $customEnd, in: customStart...Date(), displayedComponents: .date)
                 }
-                TrendSummaryChart(title: "体重趋势", unit: model.weightUnit.name, result: weightTrend, intake: false, loading: loading)
-                TrendSummaryChart(title: "摄入热量", unit: model.profile.energyUnit, result: intakeTrend, intake: true, loading: loading)
+                if visibleCharts != "intake" {
+                    TrendSummaryChart(title: "体重", unit: model.weightUnit.name, result: weightTrend, intake: false, loading: loading)
+                }
+                if visibleCharts != "weight" {
+                    TrendSummaryChart(title: "摄入热量", unit: model.profile.energyUnit, result: intakeTrend, intake: true, loading: loading)
+                }
                 DisclosureGroup("更多指标与细节") {
                     Picker("趋势指标", selection: $metric) {
                         ForEach(metrics, id: \.0) { Text($0.1).tag($0.0) }
@@ -118,9 +136,10 @@ struct TrendsView: View {
                     }
                 }
                 PrivacyNote()
-            }.padding(20)
+            }.padding(.horizontal, 16).padding(.vertical, 18)
         }
-        .background(Palette.canvas).navigationTitle("趋势").navigationBarTitleDisplayMode(.inline)
+        .background(Palette.canvas).navigationTitle("").navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .topBarLeading) { Text("趋势").font(.title3.weight(.bold)).foregroundStyle(Palette.ink) } }
         .sheet(isPresented: $showMeasurement) { NavigationStack { MeasurementEditorView() } }
         .sheet(item: $editingMeasurement) { value in NavigationStack { MeasurementEditorView(existing: value) } }
         .task(id: calculationKey) { await refreshTrend() }

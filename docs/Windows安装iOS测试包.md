@@ -2,16 +2,16 @@
 
 ## 当前状态
 
-项目已提供自动运行、也可手动触发的 GitHub Actions 工作流，位置为 .github/workflows/ios-test-package.yml。推送到 main 或提交目标为 main 的合并请求时，客户端相关文件发生变化就会自动构建；纯文档变更会跳过。
+项目提供 GitHub Actions 工作流，位置为 .github/workflows/ios-test-package.yml。按用户要求已改为仅手动触发，提交源码不会自动打包。默认只编译、测试与截图；用户确认所有改动完成后，勾选 create_packages 才生成手机与模拟器安装包。
 
-0.1.7 调整体重日期与单位输入、简化记餐、拍照后自动识别、首次身体信息引导，并同时显示体重与摄入图表。无密钥注册、HealthKit 签名声明、HTTP 后台和 AI 凭据保存继续保留。工作流生成两种独立产物：BingJian-unsigned.ipa 用于手机重签名安装，BingJian-simulator.zip 用于 iOS 模拟器。测试包保存在本机 build/iOS测试包-0.1.7，网页测试包为 build/网页测试包/BingJian-0.1.7-Appetize.zip。页面截图及校验结果见《测试与验收.md》。手机安装仍需使用 Apple 账号签名，真机运行尚待验证。
+0.1.7 调整体重日期与单位输入、简化记餐、拍照后自动识别、首次身体信息引导，并同时显示体重与摄入图表。无密钥注册、HealthKit 签名声明、HTTP 后台和 AI 凭据保存继续保留。工作流生成两种独立产物：BingJian-unsigned.ipa 用于手机重签名安装，BingJian-simulator.zip 用于 iOS 模拟器。此前生成的手机包位于 build/iOS测试包-0.1.7，属于参考图改版之前的构建。本轮参考图样式尚未打包，请勿把旧包当成新 UI；模拟器 ZIP 将在确认后统一构建。页面截图及校验结果见《测试与验收.md》。手机安装仍需使用 Apple 账号签名，真机运行尚待验证。
 
 ## 准备 GitHub 仓库
 
 1. 登录自己的 GitHub 账号。
 2. 使用私有仓库存放项目，确认该仓库已启用 Actions。
 3. 上传项目源码时包含 .github、ios，以及 backend/app/resources/food_schema.json，保留原有目录结构。
-4. 在 Actions 中查看自动触发的“iOS 测试包与界面验收”；需要重新构建时，进入该流程，点击 Run workflow。
+4. 确认改动完成后，进入 Actions 的“iOS 测试包与界面验收”，点击 Run workflow。需要生成安装包时勾选 create_packages；不勾选只运行编译、测试与截图。
 5. 构建成功后，在本次运行的 Artifacts 中下载 BingJian-unsigned 开头的产物。
 6. 解压下载的文件，取出 BingJian-unsigned.ipa。
 
@@ -26,7 +26,7 @@
 1. 在成功运行的 Artifacts 中下载 BingJian-simulator 开头的产物，解压一次。
 2. 找到其中的 BingJian-simulator.zip；它包含 ARM64 的模拟器应用，与手机 IPA 分开构建。
 3. 若选择使用 Appetize，登录自己的账号并上传 BingJian-simulator.zip，在浏览器启动 iOS 模拟器。无需连接手机或开启手机开发者模式。
-4. 可先选择“先离线记录，稍后配置”，检查饮食、体重、趋势和设置页。需要测试同步或 AI 时，再配置可从云端访问的后台或接口。
+4. 先按引导填写身体信息与活动水平，在第 3 步选择“暂不连接，开始记录”，检查饮食、体重、趋势和设置页。需要测试同步或 AI 时，再配置可从云端访问的后台或接口。
 
 Appetize 要求压缩的 iOS 模拟器 .app，不能上传真机 IPA。本项目的模拟器包在运行测试前生成，不携带 XCTest 测试组件或截图用示例记录。云端模拟器无法直接访问你电脑的 localhost 或普通家庭内网地址，HealthKit、手机相机、推送与 Watch 配对仍需实际设备验收。[Appetize 官方格式说明](https://docs.appetize.io/platform/app-management/uploading-apps/ios)
 

@@ -8,9 +8,9 @@ struct DashboardView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 22) {
+            VStack(spacing: 18) {
                 PageHeading(title: model.profile.displayName.isEmpty ? "今天，也照顾好自己" : "\(model.profile.displayName)，今天好",
-                            subtitle: "饮食、身体与日常，一点点记录。")
+                            subtitle: "饮食、身体与日常，一点点记录。", artwork: .sunrise)
                 DateStrip()
                 dailyOverview
                 adaptiveRow {
@@ -60,11 +60,17 @@ struct DashboardView: View {
                     if model.pendingCount > 0 { Text("\(model.pendingCount) 待同步") }
                 }.font(.caption).foregroundStyle(Palette.secondary)
                 PrivacyNote()
-            }.padding(20)
+            }.padding(.horizontal, 16).padding(.vertical, 18)
         }
         .background(Palette.canvas)
-        .navigationTitle("并肩")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .topBarLeading) {
+            HStack(spacing: 8) {
+                Image(systemName: "leaf.fill").foregroundStyle(Palette.teal)
+                Text("并肩").foregroundStyle(Palette.ink)
+            }.font(.title3.weight(.bold)).accessibilityElement(children: .combine)
+        } }
         .refreshable {
             if model.healthEnabled { try? await model.refreshHealth() }
             await model.sync()
@@ -78,13 +84,13 @@ struct DashboardView: View {
     }
 
     private var dailyOverview: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack(spacing: 20) {
-                VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
                     Label("每日记录", systemImage: "leaf").font(.subheadline.weight(.medium)).foregroundStyle(Palette.mint)
                     Text(model.summary.complete ? "今天已记录完整" : "记录正在积累")
                         .font(.system(.title2, design: .rounded, weight: .semibold))
-                    Text("每次记录，都让趋势更清晰。").font(.caption).foregroundStyle(Palette.mint)
+                    Text("每次记录，都让趋势更清晰。").font(.caption).foregroundStyle(.white)
                 }
                 Spacer(minLength: 0)
                 if !typeSize.isAccessibilitySize { completionRing }
@@ -99,10 +105,12 @@ struct DashboardView: View {
             Rectangle().fill(.white.opacity(0.16)).frame(height: 1)
             VStack(alignment: .leading, spacing: 8) {
                 adaptiveRow {
-                    Text(balanceLabel).font(.subheadline)
+                    Text(balanceLabel).font(.subheadline.weight(.semibold))
                     if !typeSize.isAccessibilitySize { Spacer() }
                     Text(model.summary.deficit.map { "\(abs(displayedEnergy($0) ?? 0).concise) \(model.profile.energyUnit)" } ?? "等待记录")
                         .font(.subheadline.weight(.semibold)).monospacedDigit()
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(.white.opacity(0.16), in: Capsule())
                 }
                 Text(model.summary.complete ? "饮食记录已确认。\(model.summary.method)" : "按已记录摄入暂估，未记录的餐次不代表未进食。\(model.summary.method)")
                     .font(.caption).foregroundStyle(Palette.mint).fixedSize(horizontal: false, vertical: true)
@@ -111,8 +119,15 @@ struct DashboardView: View {
                         .font(.caption).foregroundStyle(Palette.mint)
                 }
             }
-        }.padding(24).foregroundStyle(.white)
-            .background(Palette.forest, in: RoundedRectangle(cornerRadius: 28))
+        }.padding(22).foregroundStyle(.white)
+            .background {
+                ZStack(alignment: .bottomTrailing) {
+                    Palette.heroGradient
+                    HeroWave().fill(Color.green.opacity(0.22)).frame(width: 170, height: 42)
+                    HeroWave().fill(Color.yellow.opacity(0.22)).frame(width: 105, height: 32)
+                }.clipShape(RoundedRectangle(cornerRadius: 26))
+            }
+            .shadow(color: Palette.teal.opacity(0.15), radius: 12, y: 6)
     }
 
     private func heroMetric(_ title: String, value: Double?) -> some View {
@@ -129,13 +144,13 @@ struct DashboardView: View {
         ZStack {
             Circle().stroke(.white.opacity(0.12), lineWidth: 6)
             Circle().trim(from: 0, to: CGFloat(min(100, max(0, model.summary.completenessScore))) / 100)
-                .stroke(Palette.mint, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                .stroke(AngularGradient(colors: [.mint, .green, .yellow], center: .center, startAngle: .degrees(0), endAngle: .degrees(360)), style: StrokeStyle(lineWidth: 6, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             VStack(spacing: 3) {
                 Text("\(model.summary.completenessScore)%").font(.system(.title3, design: .rounded, weight: .semibold)).monospacedDigit()
-                Text("完整度").font(.caption2).foregroundStyle(Palette.mint)
+                Text("完成度").font(.caption2).foregroundStyle(Palette.mint)
             }
-        }.frame(width: 86, height: 86)
+        }.frame(width: 80, height: 80)
             .accessibilityElement(children: .ignore).accessibilityLabel("记录完整度 \(model.summary.completenessScore)%")
     }
 
