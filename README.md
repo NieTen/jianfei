@@ -56,11 +56,14 @@ docker compose exec api python -m app.cli status
 
 - [后台自动测试与 Docker 验收](https://github.com/NieTen/jianfei/actions/workflows/backend-tests.yml)：Python 3.11、3.13 执行后台测试；另在 Linux 构建镜像、启动 API 与 Caddy、校验 HTTPS，并检查重建容器后的数据卷保留。
 - [iOS 测试包与界面验收](https://github.com/NieTen/jianfei/actions/workflows/ios-test-package.yml)：仅手动运行，云端 Mac 编译 iPhone 与 Watch、执行 XCTest 并保存页面截图；默认不打包，确认完成后勾选 create_packages 才生成 IPA 和模拟器 ZIP。
+- [iOS 17.5 兼容性验收](https://github.com/NieTen/jianfei/actions/workflows/ios17-ui-check.yml)：仅手动运行，使用 iOS 17.5 模拟器检查反复切换菜单、页面状态保留和趋势连线，只保存测试结果与截图。
 - [群晖后台镜像发布](https://github.com/NieTen/jianfei/actions/workflows/docker-publish.yml)：main 的后台或群晖部署配置变更时构建 AMD64、ARM64 镜像，完成容器回归与部署检查后更新 GHCR 的 latest 标签。
 
 后台或根目录部署配置变更触发后台流程；后台和 deploy/synology 变更触发镜像发布。iOS 流程仅手动触发。只修改 README 或 docs 下的说明不会启动构建。同一分支的新提交会取消后台流程未完成的旧任务，镜像发布串行执行。日志与测试产物保留七天。详细覆盖范围见 docs/测试与验收.md。
 
 ## 当前验证状态
+
+0.1.9 交付后，源码追加了重复菜单与体重虚线修复，并增加反复切换标签、导航返回、页面任务生命周期和 1～4 天记录的检查。iPhone 与 Watch 编译通过，iOS 17.5、18.5 模拟器各 64 项客户端回归与 1 项完整点击流程零失败。本轮未重新打包，已交付的 0.1.9 安装包不含这两项后续修复，iOS 17.5.1 真机仍待下一次包复测；详见 [测试与验收](docs/测试与验收.md)。
 
 0.1.9（构建号 10）已完成云端统一打包。iPhone、Watch 和模拟器编译通过，63 项客户端回归及 1 项完整点击流程零失败；采集 52 张原生界面截图及 6 张点击流程截图。五个主页面的底部检查覆盖末尾内容完整可见、可点击且位于菜单上方，另覆盖辅助功能大字体显示。[最终客户端构建记录](https://github.com/NieTen/jianfei/actions/runs/42441845313)。
 
