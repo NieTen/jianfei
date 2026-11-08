@@ -75,6 +75,23 @@ final class AppearanceTests: XCTestCase {
             FoodItem(name: "米饭", amount: 150, basisKcal: 116, basisProteinG: 2.6, basisCarbsG: 25.9, basisFatG: 0.3, source: "ai_estimate"),
             FoodItem(name: "鸡胸肉", amount: 120, basisKcal: 165, basisProteinG: 31, basisCarbsG: 0, basisFatG: 3.6, source: "ai_estimate")]))
         try await capture(NavigationStack { MealEditorView(existing: photoMeal) }, model: model, name: "meal-nutrition-summary")
+        // 覆盖仅有几天记录时均线尚未完整形成的情形，不能只用连续 14 天样例验收。
+        for (name, offsets, showAverage) in [
+            ("weight-four-days-average", [3, 2, 1, 0], true),
+            ("weight-four-days-no-average", [3, 2, 1, 0], false),
+            ("weight-two-days", [1, 0], true),
+            ("weight-three-days", [2, 1, 0], true),
+            ("weight-missing-days", [6, 5, 3, 0], true),
+            ("weight-single-day", [0], true)
+        ] {
+            let result = try weightChartFixture(offsets: offsets)
+            try await capture(NavigationStack {
+                ScrollView {
+                    TrendSummaryChart(title: "体重", unit: "斤", result: result, intake: false,
+                                      loading: false, showAverage: showAverage).padding(16)
+                }.background(Palette.canvas).navigationTitle("趋势")
+            }, model: model, name: name)
+        }
         try await capture(OnboardingView(initialStep: 1), model: model, name: "welcome-activity")
         try await capture(OnboardingView(initialStep: 2), model: model, name: "welcome-connections")
         try await capture(OnboardingView(), model: model, name: "welcome-small-screen", compact: true)
@@ -84,6 +101,24 @@ final class AppearanceTests: XCTestCase {
         _ = model.health.reportFailure(NSError(domain: HKErrorDomain, code: 4,
             userInfo: [NSLocalizedDescriptionKey: "Missing com.apple.developer.healthkit entitlement."]))
         try await capture(NavigationStack { HealthSettingsView() }, model: model, name: "health-signing-help")
+    }
+
+    private func weightChartFixture(offsets: [Int]) throws -> TrendResult {
+        let end = try XCTUnwrap(TimeFormat.parse("2026-11-08T12:00:00Z"))
+        let weights = [80.0, 79.5, 79.15, 79.25]
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let records = try offsets.enumerated().map { index, offset -> AppRecord in
+            let date = try XCTUnwrap(calendar.date(byAdding: .day, value: -offset, to: end))
+            return try AppRecord(kind: "weight", day: TimeFormat.day(date, timezone: "UTC"),
+                                 value: WeightEntry(measuredAt: TimeFormat.iso(date), weightKg: weights[index]))
+        }
+        let result = TrendCalculator.calculate(index: RecordIndex(records: records), profile: BodyProfile(timezone: "UTC"),
+                                               weightUnit: .jin, metric: "weight", days: 7, end: end)
+        XCTAssertEqual(result.points.count, offsets.count, "不能在缺测日补出体重点")
+        XCTAssertEqual(result.points.map(\.value), Array(weights.prefix(offsets.count)).map { $0 * 2 })
+        if offsets.count < 3 { XCTAssertTrue(result.averages.isEmpty) }
+        return result
     }
 
     @MainActor

@@ -76,14 +76,12 @@ struct TrendsView: View {
                             EmptyRecordsView(title: "还没有可绘制的数据", message: "选择其他时间范围，或完成相应记录后再看趋势。", symbol: "chart.xyaxis.line")
                         } else {
                             Chart {
-                                ForEach(points) { point in
-                                    PointMark(x: .value("日期", point.date), y: .value("记录值", point.value))
-                                        .foregroundStyle(Palette.teal).symbolSize(30)
-                                }
-                                if metric == "weight" && average {
-                                    ForEach(trend.averages) { point in
-                                        LineMark(x: .value("日期", point.date), y: .value("7日移动平均", point.value))
-                                            .foregroundStyle(Palette.sage).lineStyle(StrokeStyle(lineWidth: 2.5))
+                                if metric == "weight" {
+                                    WeightTrendMarks(result: trend, showAverage: average)
+                                } else {
+                                    ForEach(points) { point in
+                                        PointMark(x: .value("日期", point.date), y: .value("记录值", point.value))
+                                            .foregroundStyle(Palette.teal).symbolSize(30)
                                     }
                                 }
                             }
@@ -110,12 +108,13 @@ struct TrendsView: View {
                         if metric == "weight" {
                             Divider()
                             Toggle("7 日移动平均", isOn: $average).font(.subheadline)
-                            HintLabel(text: "窗口至少包含 3 个有效测量日才显示均线，缺测日保持空缺。")
+                            HintLabel(text: "圆点与虚线为实际测量，实线为 7 日移动平均；只有一个均值时显示菱形点。7 天内至少 3 个测量日才显示均线，缺测日不补值。")
                         }
                     }
                 }
                 Surface {
                     NavigationLink { WeightHistoryView() } label: { SettingsRow(title: "体重记录", symbol: "scalemass") }
+                        .accessibilityIdentifier("trends.weightHistory")
                     Divider()
                     Button { showMeasurement = true } label: { SettingsRow(title: "记录围度与体脂", symbol: "figure.stand") }
                 }.buttonStyle(.plain)

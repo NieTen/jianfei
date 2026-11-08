@@ -27,6 +27,7 @@ final class RecordingFlowUITests: XCTestCase {
         XCTAssertTrue(app.buttons["暂不连接，开始记录"].waitForExistence(timeout: 10))
         app.buttons["暂不连接，开始记录"].tap()
         XCTAssertTrue(app.buttons["dashboard.weight"].waitForExistence(timeout: 20))
+        assertOnlyCustomMenu(app)
         app.buttons["dashboard.weight"].tap()
         let weight = app.textFields["weight.amount"]
         XCTAssertTrue(weight.waitForExistence(timeout: 10))
@@ -77,6 +78,7 @@ final class RecordingFlowUITests: XCTestCase {
         // 滚动到真实页面末尾，检查文字和操作区域均在自定义菜单上方。
         for tab in ["today", "meals", "trends", "community", "settings"] {
             app.buttons["tab.\(tab)"].tap()
+            assertOnlyCustomMenu(app)
             let end = app.descendants(matching: .any).matching(identifier: "page.end.\(tab)").firstMatch
             let scroll = app.scrollViews.firstMatch
             XCTAssertTrue(scroll.waitForExistence(timeout: 10))
@@ -100,5 +102,52 @@ final class RecordingFlowUITests: XCTestCase {
             image.lifetime = .keepAlways
             add(image)
         }
+        // 覆盖真机反馈的复现路径：访问过的标签页再次进入，而非每页只打开一次。
+        for _ in 0..<2 {
+            for tab in ["today", "trends", "meals", "settings", "community", "today", "today"] {
+                app.buttons["tab.\(tab)"].tap()
+                assertOnlyCustomMenu(app)
+            }
+        }
+        for tab in ["today", "trends"] {
+            app.buttons["tab.\(tab)"].tap()
+            assertOnlyCustomMenu(app)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "反复切换后-\(tab)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+        // 保留每个标签页的导航状态，并检查进入详情、跨页返回和退回根页面时不出现第二套菜单。
+        let historyLink = app.buttons["trends.weightHistory"]
+        for _ in 0..<6 {
+            if historyLink.exists && historyLink.isHittable { break }
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(historyLink.isHittable)
+        historyLink.tap()
+        XCTAssertTrue(app.navigationBars["体重记录"].waitForExistence(timeout: 10))
+        assertOnlyCustomMenu(app)
+        app.buttons["tab.today"].tap()
+        assertOnlyCustomMenu(app)
+        app.buttons["tab.trends"].tap()
+        XCTAssertTrue(app.navigationBars["体重记录"].waitForExistence(timeout: 10), "返回趋势页应保留之前打开的体重历史")
+        assertOnlyCustomMenu(app)
+        app.navigationBars["体重记录"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["trends.weightHistory"].waitForExistence(timeout: 10))
+        assertOnlyCustomMenu(app)
+    }
+
+    @MainActor
+    private func assertOnlyCustomMenu(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let menu = app.descendants(matching: .any).matching(identifier: "navigation.bottom").firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), file: file, line: line)
+        XCTAssertEqual(menu.buttons.count, 5, "底部应只有五个自定义菜单入口", file: file, line: line)
+        for tab in ["today", "meals", "trends", "community", "settings"] {
+            XCTAssertTrue(app.buttons["tab.\(tab)"].isHittable, "自定义菜单入口应可点击", file: file, line: line)
+        }
+        XCTAssertFalse(app.tabBars.allElementsBoundByIndex.contains { $0.isHittable },
+                       "系统 TabBar 不得与自定义菜单同时显示", file: file, line: line)
+        XCTAssertFalse(app.tabBars.buttons.allElementsBoundByIndex.contains { $0.isHittable },
+                       "系统 TabBar 不得出现第二组可点击入口", file: file, line: line)
     }
 }

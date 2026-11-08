@@ -9,6 +9,15 @@ struct TrendSummaryChart: View {
     let loading: Bool
     @State private var showAverage = true
 
+    init(title: String, unit: String, result: TrendResult, intake: Bool, loading: Bool, showAverage: Bool = true) {
+        self.title = title
+        self.unit = unit
+        self.result = result
+        self.intake = intake
+        self.loading = loading
+        _showAverage = State(initialValue: showAverage)
+    }
+
     var body: some View {
         Surface {
             HStack(alignment: .top) {
@@ -35,16 +44,7 @@ struct TrendSummaryChart: View {
                                 .foregroundStyle(Palette.teal.gradient).cornerRadius(5)
                         }
                     } else {
-                        ForEach(linePoints) { point in
-                            AreaMark(x: .value("日期", point.date), yStart: .value("基线", weightBounds.lowerBound), yEnd: .value("体重", point.value))
-                                .foregroundStyle(LinearGradient(colors: [Palette.teal.opacity(0.18), Palette.teal.opacity(0.01)], startPoint: .top, endPoint: .bottom))
-                            LineMark(x: .value("日期", point.date), y: .value("体重", point.value))
-                                .foregroundStyle(Palette.teal).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                        }
-                        ForEach(result.points) { point in
-                            PointMark(x: .value("日期", point.date), y: .value("体重", point.value))
-                                .foregroundStyle(Palette.teal).symbolSize(24)
-                        }
+                        WeightTrendMarks(result: result, showAverage: showAverage, baseline: weightBounds.lowerBound)
                     }
                 }
                 .chartLegend(.hidden)
@@ -68,15 +68,18 @@ struct TrendSummaryChart: View {
                 if !intake {
                     Divider().overlay(Palette.border)
                     Toggle("7 日移动平均", isOn: $showAverage).font(.subheadline.weight(.medium))
+                        .accessibilityIdentifier("trend.weight.average")
                 }
-                Text(intake ? "仅展示有餐食记录的日期；未记录的餐次不代表未进食。" : (showAverage && !result.averages.isEmpty ? "圆点为每天最后一次测量，曲线为 7 日移动平均。" : "每天采用最后一次测量。7 天内至少有 3 个测量日才显示均线。"))
+                Text(intake ? "仅展示有餐食记录的日期；未记录的餐次不代表未进食。" : weightExplanation)
                     .font(.caption).foregroundStyle(Palette.secondary)
             }
         }
     }
 
-    private var linePoints: [TrendPoint] {
-        showAverage && !result.averages.isEmpty ? result.averages : result.points
+    private var weightExplanation: String {
+        let measured = "圆点与虚线表示每天最后一次测量，缺测日不补值。"
+        guard showAverage else { return measured }
+        return measured + (result.averages.isEmpty ? "7 天内至少有 3 个测量日才显示均线。" : "实线表示 7 日移动平均，只有一个均值时显示菱形点。")
     }
 
     private var weightBounds: ClosedRange<Double> {
@@ -86,5 +89,44 @@ struct TrendSummaryChart: View {
         let padding = max(0.2, (maximum - minimum) * 0.15)
         // 面积从可见坐标轴下沿开始，不把体重曲线强制拉到零。
         return max(0, minimum - padding)...(maximum + padding)
+    }
+}
+
+// 概览与详细体重图共用标记，避免打开均线后丢失前几个测量日的连线。
+struct WeightTrendMarks: ChartContent {
+    let result: TrendResult
+    let showAverage: Bool
+    var baseline: Double? = nil
+
+    var body: some ChartContent {
+        if let baseline {
+            ForEach(result.points) { point in
+                AreaMark(x: .value("日期", point.date), yStart: .value("基线", baseline), yEnd: .value("体重", point.value))
+                    .interpolationMethod(.linear)
+                    .foregroundStyle(LinearGradient(colors: [Palette.teal.opacity(0.12), Palette.teal.opacity(0.01)], startPoint: .top, endPoint: .bottom))
+            }
+        }
+        ForEach(result.points) { point in
+            // 虚线只连接已有测量点，不生成缺测日数据；均线使用独立序列。
+            LineMark(x: .value("日期", point.date), y: .value("体重", point.value), series: .value("序列", "实际测量"))
+                .interpolationMethod(.linear)
+                .foregroundStyle(Palette.teal.opacity(0.65))
+                .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 4]))
+        }
+        if showAverage {
+            ForEach(result.averages) { point in
+                LineMark(x: .value("日期", point.date), y: .value("体重", point.value), series: .value("序列", "7 日移动平均"))
+                    .interpolationMethod(.linear)
+                    .foregroundStyle(Palette.teal).lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                if result.averages.count == 1 {
+                    PointMark(x: .value("日期", point.date), y: .value("7 日移动平均", point.value))
+                        .foregroundStyle(Palette.teal).symbol(.diamond).symbolSize(36)
+                }
+            }
+        }
+        ForEach(result.points) { point in
+            PointMark(x: .value("日期", point.date), y: .value("体重", point.value))
+                .foregroundStyle(Palette.teal).symbolSize(24)
+        }
     }
 }
