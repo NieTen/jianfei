@@ -92,8 +92,10 @@ struct AppTabBar: View {
             ForEach(items, id: \.0) { item in
                 Button { selection = item.0 } label: {
                     VStack(spacing: 5) {
-                        Image(systemName: item.2).font(.system(size: iconSize, weight: .medium))
-                        Text(item.1).font(.caption2.weight(selection == item.0 ? .semibold : .regular)).lineLimit(1).minimumScaleFactor(0.8)
+                        // 菜单需要同时容纳五个入口，限制图标与短标签放大，正文仍完整支持辅助功能字号。
+                        Image(systemName: item.2).font(.system(size: min(iconSize, 28), weight: .medium))
+                        Text(item.1).font(.caption2.weight(selection == item.0 ? .semibold : .regular))
+                            .dynamicTypeSize(...DynamicTypeSize.xxxLarge).lineLimit(1).minimumScaleFactor(0.8)
                     }.padding(.horizontal, 13).padding(.vertical, 8)
                         .foregroundStyle(selection == item.0 ? Palette.teal : Palette.secondary)
                         .background(selection == item.0 ? Palette.soft : .clear, in: RoundedRectangle(cornerRadius: 18))
