@@ -62,28 +62,46 @@ struct RootView: View {
 
 struct MainTabs: View {
     @Binding var selection: String
+    @State private var visitedTabs: Set<String>
+    private let tabs = ["today", "meals", "trends", "community", "settings"]
+
+    init(selection: Binding<String>) {
+        _selection = selection
+        _visitedTabs = State(initialValue: [selection.wrappedValue])
+    }
+
     var body: some View {
-        // 菜单独占布局空间，避免 TabView 内部容器忽略外层安全区后遮住滚动内容。
+        // iOS 17 的 TabView 会在重新选中时恢复系统底栏；这里仅保留自定义菜单。
         VStack(spacing: 0) {
-            TabView(selection: $selection) {
-                // 隐藏规则放在导航栈内部，随当前页面传递；只挂在栈外会在重新选中时丢失。
-                NavigationStack { DashboardView().toolbar(.hidden, for: .tabBar) }
-                    .tabItem { Label("今天", systemImage: "sun.max") }.tag("today")
-                NavigationStack { MealsView().toolbar(.hidden, for: .tabBar) }
-                    .tabItem { Label("饮食", systemImage: "fork.knife") }.tag("meals")
-                NavigationStack { TrendsView().toolbar(.hidden, for: .tabBar) }
-                    .tabItem { Label("趋势", systemImage: "chart.xyaxis.line") }.tag("trends")
-                NavigationStack { CommunityView().toolbar(.hidden, for: .tabBar) }
-                    .tabItem { Label("伙伴", systemImage: "person.2") }.tag("community")
-                NavigationStack { SettingsView().toolbar(.hidden, for: .tabBar) }
-                    .tabItem { Label("我的", systemImage: "person.crop.circle") }.tag("settings")
+            ZStack {
+                ForEach(tabs, id: \.self) { tab in
+                    if visitedTabs.contains(tab) || selection == tab {
+                        // 按需创建并保留导航栈，切换时不重建页面，不丢失表单、滚动和详情状态。
+                        NavigationStack { page(tab) }
+                            .opacity(selection == tab ? 1 : 0)
+                            .allowsHitTesting(selection == tab)
+                            .accessibilityHidden(selection != tab)
+                            .zIndex(selection == tab ? 1 : 0)
+                    }
+                }
             }
-            .toolbar(.hidden, for: .tabBar)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
             AppTabBar(selection: $selection)
         }
+        .onChange(of: selection) { _, tab in visitedTabs.insert(tab) }
         .toolbarBackground(Palette.canvas, for: .navigationBar)
+    }
+
+    @ViewBuilder
+    private func page(_ tab: String) -> some View {
+        switch tab {
+        case "meals": MealsView()
+        case "trends": TrendsView()
+        case "community": CommunityView()
+        case "settings": SettingsView()
+        default: DashboardView()
+        }
     }
 }
 
