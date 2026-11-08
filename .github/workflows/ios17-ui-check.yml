@@ -1,0 +1,85 @@
+name: iOS 17.5 菜单与趋势兼容性验收
+
+# 只做原生测试和截图，用户确认打包后再使用正式打包流程。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios17-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility:
+    name: iOS 17.5 反复切换与趋势检查
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 获取源码
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: 准备 iOS 17.5 运行环境
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          mkdir -p build/iOS17
+          xcodebuild -version | tee build/iOS17/environment.log
+          git rev-parse HEAD >> build/iOS17/environment.log
+          xcrun simctl list runtimes -j > build/iOS17/runtimes.json
+          if ! python3 -c 'import json; r=json.load(open("build/iOS17/runtimes.json"))["runtimes"]; assert any(v["identifier"]=="com.apple.CoreSimulator.SimRuntime.iOS-17-5" and v.get("isAvailable") for v in r)'; then
+            xcodebuild -downloadPlatform iOS -buildVersion 17.5 2>&1 | tee build/iOS17/runtime-download.log
+          fi
+          xcrun simctl list runtimes -j > build/iOS17/runtimes.json
+          python3 -c 'import json; r=json.load(open("build/iOS17/runtimes.json"))["runtimes"]; assert any(v["identifier"]=="com.apple.CoreSimulator.SimRuntime.iOS-17-5" and v.get("isAvailable") for v in r), "iOS 17.5 运行环境不可用，不能用其他版本冒充验收"'
+          simulator_id=$(xcrun simctl create '并肩 iOS 17.5 验收' com.apple.CoreSimulator.SimDeviceType.iPhone-15 com.apple.CoreSimulator.SimRuntime.iOS-17-5)
+          echo "SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
+          xcrun simctl boot "$simulator_id"
+          xcrun simctl bootstatus "$simulator_id" -b
+
+      - name: 运行客户端测试与真实点击流程
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios/BingJian.xcodeproj \
+            -scheme BingJian \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -derivedDataPath build/iOS17/DerivedData \
+            -resultBundlePath build/iOS17/Tests.xcresult \
+            -parallel-testing-enabled NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            test 2>&1 | tee build/iOS17/tests.log
+
+      - name: 收集页面截图
+        if: always()
+        run: |
+          if [ -d build/iOS17/Tests.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/iOS17/Tests.xcresult --output-path build/iOS17/ui-interactions
+          fi
+
+      - name: 保存兼容性验收结果
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: BingJian-iOS17-${{ github.run_number }}
+          path: |
+            build/iOS17/*.log
+            build/iOS17/runtimes.json
+            build/iOS17/Tests.xcresult
+            build/iOS17/ui-interactions
+          if-no-files-found: warn
+          retention-days: 7
