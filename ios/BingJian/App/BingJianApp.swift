@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 @MainActor
@@ -61,35 +62,20 @@ struct RootView: View {
 }
 
 struct MainTabs: View {
+    @EnvironmentObject private var model: AppModel
     @Binding var selection: String
-    @State private var visitedTabs: Set<String>
-    private let tabs = ["today", "meals", "trends", "community", "settings"]
-
-    init(selection: Binding<String>) {
-        _selection = selection
-        _visitedTabs = State(initialValue: [selection.wrappedValue])
-    }
 
     var body: some View {
         // iOS 17 的 TabView 会在重新选中时恢复系统底栏；这里仅保留自定义菜单。
         VStack(spacing: 0) {
-            ZStack {
-                ForEach(tabs, id: \.self) { tab in
-                    if visitedTabs.contains(tab) || selection == tab {
-                        // 按需创建并保留导航栈，切换时不重建页面，不丢失表单、滚动和详情状态。
-                        NavigationStack { page(tab) }
-                            .opacity(selection == tab ? 1 : 0)
-                            .allowsHitTesting(selection == tab)
-                            .accessibilityHidden(selection != tab)
-                            .zIndex(selection == tab ? 1 : 0)
-                    }
-                }
+            PersistentTabHost(selection: selection) { tab in
+                NavigationStack { page(tab) }
+                    .environmentObject(model).environmentObject(model.health).environmentObject(model.reminders)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
             AppTabBar(selection: $selection)
         }
-        .onChange(of: selection) { _, tab in visitedTabs.insert(tab) }
         .toolbarBackground(Palette.canvas, for: .navigationBar)
     }
 
@@ -101,6 +87,96 @@ struct MainTabs: View {
         case "community": CommunityView()
         case "settings": SettingsView()
         default: DashboardView()
+        }
+    }
+}
+
+// 只替换标签页容器，原有 SwiftUI 页面与导航栈保持不变。
+struct PersistentTabHost<Content: View>: UIViewControllerRepresentable {
+    let selection: String
+    let content: (String) -> Content
+
+    init(selection: String, @ViewBuilder content: @escaping (String) -> Content) {
+        self.selection = selection
+        self.content = content
+    }
+
+    func makeUIViewController(context: Context) -> PersistentTabController {
+        PersistentTabController()
+    }
+
+    func updateUIViewController(_ controller: PersistentTabController, context: Context) {
+        // 继承外部的语言、字号、颜色与其他环境设置，截图和实际页面采用相同配置。
+        let root = AnyView(content(selection).environment(\.self, context.environment))
+        controller.select(selection, rootView: root)
+    }
+}
+
+@MainActor
+final class PersistentTabController: UIViewController {
+    private var pages: [String: UIHostingController<AnyView>] = [:]
+    private var activePage: UIHostingController<AnyView>?
+    private var visible = false
+
+    // 手动转发生命周期：切走时取消页面任务，重新进入时恢复刷新，缓存本身保留导航状态。
+    override var shouldAutomaticallyForwardAppearanceMethods: Bool { false }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        activePage?.beginAppearanceTransition(true, animated: animated)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        activePage?.endAppearanceTransition()
+        visible = true
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        visible = false
+        activePage?.beginAppearanceTransition(false, animated: animated)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        activePage?.endAppearanceTransition()
+    }
+
+    func select(_ key: String, rootView: AnyView) {
+        let next: UIHostingController<AnyView>
+        if let cached = pages[key] {
+            next = cached
+            next.rootView = rootView
+        } else {
+            next = UIHostingController(rootView: rootView)
+            next.view.backgroundColor = .clear
+            pages[key] = next
+        }
+        guard next !== activePage else { return }
+        loadViewIfNeeded()
+        let previous = activePage
+        previous?.willMove(toParent: nil)
+        addChild(next)
+        if visible {
+            previous?.beginAppearanceTransition(false, animated: false)
+            next.beginAppearanceTransition(true, animated: false)
+        }
+        previous?.view.removeFromSuperview()
+        previous?.removeFromParent()
+        next.view.frame = view.bounds
+        next.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(next.view)
+        next.didMove(toParent: self)
+        activePage = next
+        if visible {
+            previous?.endAppearanceTransition()
+            next.endAppearanceTransition()
         }
     }
 }

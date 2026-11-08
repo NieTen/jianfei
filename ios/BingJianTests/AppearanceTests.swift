@@ -6,6 +6,45 @@ import XCTest
 
 final class AppearanceTests: XCTestCase {
     @MainActor
+    func testTabContainerPreservesStateAndForwardsPageLifecycle() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let controller = PersistentTabController()
+        let first = TabLifecycleProbeState()
+        let second = TabLifecycleProbeState()
+        controller.select("first", rootView: AnyView(TabLifecycleProbe(state: first)))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousWindow?.makeKey()
+        }
+        let firstVisible = try await waitForTabProbe { first.runningTasks == 1 && first.visits == [1] }
+        XCTAssertTrue(firstVisible, "首次进入应开始页面任务")
+        controller.select("second", rootView: AnyView(TabLifecycleProbe(state: second)))
+        let switched = try await waitForTabProbe { first.runningTasks == 0 && second.runningTasks == 1 }
+        XCTAssertTrue(switched, "切走应取消旧页面任务，避免后台继续计算或请求")
+        XCTAssertEqual(first.disappearances, 1)
+        controller.select("first", rootView: AnyView(TabLifecycleProbe(state: first)))
+        let returned = try await waitForTabProbe { first.runningTasks == 1 && second.runningTasks == 0 && first.visits == [1, 2] }
+        XCTAssertTrue(returned, "返回应重新刷新，并保留原 SwiftUI 状态")
+        XCTAssertEqual(second.disappearances, 1)
+        controller.select("first", rootView: AnyView(TabLifecycleProbe(state: first)))
+        XCTAssertEqual(first.visits, [1, 2], "重复点选当前页不应重建或重复触发进入")
+    }
+
+    @MainActor
+    private func waitForTabProbe(_ condition: () -> Bool) async throws -> Bool {
+        for _ in 0..<30 {
+            if condition() { return true }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        return condition()
+    }
+
+    @MainActor
     func testMainPagesInLightDarkAndLargeType() async throws {
         let previousNamespace = UserDefaults.standard.string(forKey: "local_namespace")
         let previousWeightUnit = UserDefaults.standard.string(forKey: AppModel.weightUnitPreferenceKey)
@@ -201,5 +240,32 @@ final class AppearanceTests: XCTestCase {
             if let scroll = verticalScroll(in: child, window: window) { return scroll }
         }
         return nil
+    }
+}
+
+@MainActor
+final class TabLifecycleProbeState {
+    var visits: [Int] = []
+    var disappearances = 0
+    var runningTasks = 0
+}
+
+struct TabLifecycleProbe: View {
+    let state: TabLifecycleProbeState
+    @State private var visits = 0
+
+    var body: some View {
+        Text("页面生命周期验收")
+            .onAppear {
+                visits += 1
+                state.visits.append(visits)
+            }
+            .onDisappear { state.disappearances += 1 }
+            .task {
+                state.runningTasks += 1
+                defer { state.runningTasks -= 1 }
+                // 用可取消的等待验证切页行为，不访问外部服务。
+                try? await Task.sleep(for: .seconds(30))
+            }
     }
 }
