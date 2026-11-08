@@ -4,8 +4,11 @@ import SwiftUI
 import UIKit
 import Vision
 
+/// 手机端的状态与流程协调入口：页面发起操作，领域层计算，存储与网络层负责副作用。
+/// 不在这里重复定义营养、重量等计算规则；完整调用链见 docs/代码导读.md。
 @MainActor
 final class AppModel: ObservableObject {
+    // MARK: - 页面状态、本机偏好与服务依赖
     static let weightUnitPreferenceKey = "preferred_weight_unit"
     @Published private(set) var weightUnit = WeightUnit(rawValue: UserDefaults.standard.string(forKey: AppModel.weightUnitPreferenceKey) ?? "") ?? .kg
     @Published var records: [AppRecord] = []
@@ -73,6 +76,8 @@ final class AppModel: ObservableObject {
     private let thumbnailCache = NSCache<NSString, NSData>()
     var deviceId: String
 
+    // MARK: - 创建当前本地身份的存储及服务回调
+
     init(responses: ResponsesClient = ResponsesClient()) {
         self.responses = responses
         namespace = UserDefaults.standard.string(forKey: "local_namespace") ?? UUID().uuidString.lowercased()
@@ -109,6 +114,8 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - 当前档案、业务日与本机显示单位
+
     var profile: BodyProfile { activeProfile }
     var editableProfile: BodyProfile { pendingProfileRecord?.decode(BodyProfile.self) ?? profile }
     func setWeightUnit(_ unit: WeightUnit) {
@@ -139,6 +146,8 @@ final class AppModel: ObservableObject {
     var favorites: [FavoriteFood] {
         (recordIndex.byKind["favorite"] ?? []).compactMap { $0.decode(FavoriteFood.self) }
     }
+
+    // MARK: - 启动、重载与汇总刷新
 
     func start() async {
         if clockTask == nil {
@@ -239,6 +248,8 @@ final class AppModel: ObservableObject {
         selectedSummary = result
         summaryRefreshing = false
     }
+
+    // MARK: - 页面操作入口与本地记录写入
 
     func perform(_ action: @escaping @MainActor () async throws -> Void) {
         Task {
@@ -372,6 +383,8 @@ final class AppModel: ObservableObject {
         try await saveRecord(AppRecord(kind: "food_preference", day: day, value: preference, id: old?.id ?? UUID().uuidString.lowercased()))
     }
 
+    // MARK: - 餐食照片与三种识别路径
+
     func savePhoto(_ data: Data, mealId: String) async throws -> String {
         let owner = namespace
         let store = try requireStore()
@@ -499,6 +512,8 @@ final class AppModel: ObservableObject {
         return task
     }
 
+    // MARK: - 后台连接、登录与本地身份切换
+
     func checkConnection() async throws {
         try await saveServerAddress(serverURL)
         let response = try await api.send("health", authenticated: false)
@@ -583,6 +598,8 @@ final class AppModel: ObservableObject {
         loadAIConfiguration()
     }
 
+    // MARK: - 同步调度与后台任务取消
+
     func sync() async {
         guard syncEnabled, session != nil, !changingAccount, !deletionPending, let syncEngine else { return }
         if syncing { syncRequested = true; return }
@@ -648,6 +665,8 @@ final class AppModel: ObservableObject {
         capabilities = value
     }
 
+    // MARK: - 地址持久化与首次引导
+
     func saveServerAddress(_ value: String) async throws {
         let changed = try ServerAddress.normalize(value).absoluteString != UserDefaults.standard.string(forKey: "server_url")
         if changed { await stopBackgroundWork() }
@@ -689,6 +708,8 @@ final class AppModel: ObservableObject {
         await reload()
         scheduleSync()
     }
+
+    // MARK: - AI 配置、密钥复用与模型列表
 
     func aiAPIKey() -> String {
         guard let data = KeychainStore.read("ai_key:" + namespace) else { return "" }
@@ -823,6 +844,8 @@ final class AppModel: ObservableObject {
         } catch {}
     }
 
+    // MARK: - 数据与账号删除流程
+
     func requestDeletion(account: Bool, password: String) async throws {
         guard let session else { throw APIError(code: "AUTH_REQUIRED", message: "请先登录需要删除数据的账号") }
         let requestId = UUID().uuidString.lowercased()
@@ -881,6 +904,8 @@ final class AppModel: ObservableObject {
         notice = "已取消尚未提交的删除请求，可自行重新开启同步"
     }
 
+    // MARK: - 健康授权与增量刷新
+
     func authorizeHealth() async throws {
         try await health.authorize()
         healthEnabled = true
@@ -904,6 +929,8 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - 伙伴、待执行命令与冲突处理
+
     func refreshChallenges() async throws {
         challenges = try await api.send("challenges").array?.compactMap(\.object) ?? []
     }
@@ -923,6 +950,8 @@ final class AppModel: ObservableObject {
         await reload()
         scheduleSync()
     }
+
+    // MARK: - 手机与 Watch 的状态及记录交换
 
     private func publishWatchContext() {
         let today = TimeFormat.day(timezone: profile.timezone, startMinutes: profile.dayStartMinutes)

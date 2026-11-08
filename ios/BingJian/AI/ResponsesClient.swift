@@ -1,5 +1,7 @@
 import Foundation
 
+/// 手机直连的 Responses 客户端；后台代发由 backend/app/ai.py 另行实现。
+/// 负责网络与最多一次营养补全，结构解析交给 FoodRecognition，凭据选择由 AppModel 管理。
 actor ResponsesClient {
     private let session: URLSession
     private var modelCache: [String: (Date, [AIModelOption])] = [:]

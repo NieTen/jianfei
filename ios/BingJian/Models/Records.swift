@@ -1,5 +1,7 @@
 import Foundation
 
+/// 本地记录与远端实体使用的业务封套；Codec 将驼峰字段转换为线路 JSON 的蛇形字段。
+/// version 是服务端版本，业务日期与更新时间不同；同步请求另用带 baseVersion 的 SyncMutation。
 struct AppRecord: Codable, Identifiable, Equatable, Sendable {
     var id: String
     var kind: String
@@ -46,6 +48,7 @@ struct BodyProfile: Codable, Equatable, Sendable {
     var effectiveAt: String?
 }
 
+/// 体重持久化始终以公斤为单位；斤/磅仅在输入和显示边界经 WeightUnit 换算。
 struct WeightEntry: Codable, Equatable, Sendable {
     var measuredAt = TimeFormat.iso()
     var weightKg: Double
@@ -59,6 +62,7 @@ struct WeightEntry: Codable, Equatable, Sendable {
     var representative = false
 }
 
+/// 基础营养乘份量和食用比例得到实际摄入；未知保持 nil，锁定的单项值视为最终值。
 struct FoodItem: Codable, Identifiable, Equatable, Sendable {
     var id = UUID().uuidString.lowercased()
     var name: String

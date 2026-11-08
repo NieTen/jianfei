@@ -5,6 +5,8 @@ struct TrendResult: Sendable {
     var averages: [TrendPoint]
 }
 
+/// 从记录索引生成图表数据；原始测量与移动平均分别输出，视图不得用均线替换测量序列。
+/// 缺测日不补零；平均值按七个自然日中至少三个有效测量日计算。
 enum TrendCalculator {
     static func calculate(index: RecordIndex, profile: BodyProfile, weightUnit: WeightUnit, metric: String, days: Int, end: Date) -> TrendResult {
         var result = TrendResult(points: [], averages: [])

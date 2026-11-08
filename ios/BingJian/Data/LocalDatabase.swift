@@ -3,6 +3,8 @@ import SQLite3
 
 private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
+/// 按本地身份隔离的 SQLite 存储；actor 串行化访问，事务保证记录与待发变更一起落库。
+/// 同步回执、冲突、游标也在这里保存；不要绕过此层直接改 UI 内存数组冒充已保存。
 actor LocalDatabase {
     private var connection: OpaquePointer?
     let directory: URL
@@ -139,6 +141,7 @@ actor LocalDatabase {
             }
     }
 
+    // 同一实体的较早变更未处理时，后续变更不能越过它；取出后标记为发送中以等待逐条回执。
     func nextBatch() throws -> [SyncMutation] {
         try transaction {
             let rows = try query("SELECT o.document FROM outbox o WHERE o.state='pending' AND NOT EXISTS(SELECT 1 FROM outbox p WHERE p.entity_id=o.entity_id AND p.created_at<o.created_at) ORDER BY o.created_at LIMIT 200")

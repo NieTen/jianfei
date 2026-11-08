@@ -8,6 +8,8 @@ struct SyncReport: Sendable {
     var failed = 0
 }
 
+/// 编排握手、命令、照片、记录推送和分页拉取；记录状态由 LocalDatabase 持久化。
+/// 实例/用户数据世代检查防止错服或删除后的旧数据被重新上传，不能当成普通缓存失效处理。
 actor SyncEngine {
     private let api: APIClient
     private let store: LocalDatabase
@@ -169,6 +171,7 @@ actor SyncEngine {
         }
     }
 
+    // 分页快照完成后才提交最终游标与集合信息，未完成的分页不能被当成全量恢复成功。
     private func restoreSnapshot() async throws -> Int {
         let response = try await api.send("sync/snapshots", method: "POST", body: [:])
         guard let snapshot = response.object else { throw APIError(code: "INVALID_RESPONSE", message: "快照创建失败") }
