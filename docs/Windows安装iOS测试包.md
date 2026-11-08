@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-0.1.9 的源码修复与本地检查已完成，但 GitHub 因账号付款状态或支出上限拒绝启动构建，尚无新版安装包。需恢复 Actions 可用状态后重新运行；现有 0.1.8 包不包含本轮修复。
+0.1.9（构建号 10）已于 2026 年 11 月 8 日完成云端编译、测试和打包。iPhone、Watch 与模拟器编译通过，63 项客户端回归和 1 项完整点击流程零失败。手机与模拟器包均已下载并完成版本、ZIP 完整性、HTTP 策略和签名声明检查。[最终构建记录](https://github.com/NieTen/jianfei/actions/runs/42441845313)。
 
 项目提供 GitHub Actions 工作流，位置为 .github/workflows/ios-test-package.yml。按用户要求已改为仅手动触发，提交源码不会自动打包。默认只编译、测试与截图；用户确认所有改动完成后，勾选 create_packages 才生成手机与模拟器安装包。
 
@@ -11,13 +11,13 @@
 ## 准备 GitHub 仓库
 
 1. 登录自己的 GitHub 账号。
-2. 使用私有仓库存放项目，确认该仓库已启用 Actions。
+2. 按自己的要求选择仓库可见性，确认该仓库已启用 Actions。
 3. 上传项目源码时包含 .github、ios，以及 backend/app/resources/food_schema.json，保留原有目录结构。
 4. 确认改动完成后，进入 Actions 的“iOS 测试包与界面验收”，点击 Run workflow。需要生成安装包时勾选 create_packages；不勾选只运行编译、测试与截图。
 5. 构建成功后，在本次运行的 Artifacts 中下载 BingJian-unsigned 开头的产物。
 6. 解压下载的文件，取出 BingJian-unsigned.ipa。
 
-使用 GitHub Desktop 时，可从本项目目录创建仓库，再通过 Publish repository 上传，保持“Keep this code private”选中。提交前检查变更列表，配置文件、签名材料、数据库和本地数据应留在本机。.gitignore 已列出这些常见路径。
+使用 GitHub Desktop 时，可从本项目目录创建仓库，再通过 Publish repository 上传，根据需要设置“Keep this code private”。提交前检查变更列表，配置文件、签名材料、数据库和本地数据应留在本机。.gitignore 已列出这些常见路径。
 
 工作流使用 GitHub 托管的 macOS 运行器。私有仓库会消耗账号的 Actions 配额，超过可用额度时按账号账单设置处理。运行前查看 GitHub 的 Billing and licensing 页面。[GitHub 托管运行器说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) [GitHub Actions 计费说明](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
 
