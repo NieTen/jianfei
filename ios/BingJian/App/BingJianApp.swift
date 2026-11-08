@@ -107,5 +107,6 @@ struct AppTabBar: View {
         }.padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 2)
             .background { Palette.card.ignoresSafeArea(edges: .bottom) }
             .overlay(alignment: .top) { Rectangle().fill(Palette.border.opacity(0.65)).frame(height: 0.5) }
+            .accessibilityElement(children: .contain).accessibilityIdentifier("navigation.bottom")
     }
 }

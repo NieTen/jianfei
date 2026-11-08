@@ -80,12 +80,21 @@ final class RecordingFlowUITests: XCTestCase {
             let end = app.descendants(matching: .any).matching(identifier: "page.end.\(tab)").firstMatch
             let scroll = app.scrollViews.firstMatch
             XCTAssertTrue(scroll.waitForExistence(timeout: 10))
-            for _ in 0..<8 {
-                if end.exists && end.isHittable && end.frame.maxY < app.buttons["tab.today"].frame.minY { break }
+            var previousEndFrame: CGRect?
+            for _ in 0..<10 {
                 scroll.swipeUp()
+                if end.exists && end.isHittable {
+                    let frame = end.frame
+                    // 连续滚动后末尾位置不再变化才算到底，避免把部分可见的文字当成完整显示。
+                    if let previous = previousEndFrame, abs(previous.minY - frame.minY) < 1,
+                       abs(previous.height - frame.height) < 1 { break }
+                    previousEndFrame = frame
+                }
             }
+            let bar = app.descendants(matching: .any).matching(identifier: "navigation.bottom").firstMatch
+            XCTAssertTrue(bar.exists)
             XCTAssertTrue(end.exists && end.isHittable, "\(tab) 页面底部应可见")
-            XCTAssertLessThanOrEqual(end.frame.maxY, app.buttons["tab.today"].frame.minY, "\(tab) 页面末尾不能被菜单覆盖")
+            XCTAssertLessThanOrEqual(end.frame.maxY, bar.frame.minY, "\(tab) 页面末尾不能被菜单覆盖")
             let image = XCTAttachment(screenshot: app.screenshot())
             image.name = "页面底部-\(tab)"
             image.lifetime = .keepAlways
