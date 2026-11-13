@@ -35,7 +35,7 @@ def replay_deletions(service, events):
                 else:
                     repo.insert("entity_ledger", {**key, "deleted": 1, "created_change_id": event["id"]})
             elif event["action"] in ("all_data", "account"):
-                for table in ("entities", "changes", "receipts", "scores", "score_events", "snapshots", "ai_settings", "tasks", "notifications"):
+                for table in ("entities", "changes", "receipts", "scores", "score_events", "snapshots", "ai_settings", "tasks", "notifications", "cloud_ai_preferences", "cloud_ai_consents"):
                     repo.delete(table, {"user_id": user["id"]})
                 repo.update("media", {"status": "deleted"}, {"user_id": user["id"]})
                 repo.update("users", {"generation": max(user["generation"], int(event["target_id"] or 1)),
@@ -46,13 +46,19 @@ def replay_deletions(service, events):
                 repo.update("members", {"goal": "{}", "baseline": None, "status": "left"}, {"user_id": user["id"]})
                 repo.delete("encouragements", {"sender_id": user["id"]})
                 if event["action"] == "account":
-                    repo.update("users", {"password_hash": "", "recovery_hash": "", "display_name": "已注销用户"}, {"id": user["id"]})
+                    if user["email"]:
+                        repo.delete("email_challenges", {"email": user["email"]})
+                    for table in ("entitlement_grants", "entitlement_events", "ai_usage", "email_challenges"):
+                        repo.delete(table, {"user_id": user["id"]})
+                    repo.update("users", {"password_hash": "", "recovery_hash": "", "display_name": "已注销用户",
+                                          "email": None, "email_verified_at": None}, {"id": user["id"]})
+                else:
+                    repo.update("ai_usage", {"status": "released", "updated_at": now_iso()}, {"user_id": user["id"], "status": "reserved"})
             if not repo.one("deletion_ledger", {"id": event["id"]}):
                 repo.insert("deletion_ledger", event)
         repo.update("settings", {"value": str(uuid.uuid4())}, {"key": "sync_epoch"})
-        for user in repo.find("users"):
-            repo.update("sessions", {"revoked_at": now_iso()}, {"user_id": user["id"]})
-            repo.update("consents", {"scopes": "[]", "revoked_at": now_iso(), "updated_at": now_iso()}, {"owner_id": user["id"]})
+        repo.update("sessions", {"revoked_at": now_iso(), "revoked_reason": "restore"}, {"revoked_at": None})
+        repo.update("consents", {"scopes": "[]", "revoked_at": now_iso(), "updated_at": now_iso()}, {"revoked_at": None})
 
 
 def restore(service, source, password, object_directory=None):
@@ -75,9 +81,12 @@ def restore(service, source, password, object_directory=None):
             shutil.copytree(secrets_source, service.settings.data_dir / "secrets", dirs_exist_ok=True)
         service.db.initialize()
         replay_deletions(service, events)
+        service.entitlements.freeze_after_restore()
         service.media.cleanup()
         service.maintenance.persist_ledger()
         print("恢复完成。旧会话及游标已失效，用户重新登录并确认共享授权后继续使用。")
+        if service.settings.deployment_mode == "cloud":
+            print("云端备份中的会员权益已冻结并保留审计；管理员核验后重新授予，用户需重新同意 AI 照片处理。")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -125,6 +134,22 @@ def main():
     restoration.add_argument("archive")
     restoration.add_argument("--objects", help="增量附件 objects 目录，默认取恢复包同级目录")
     commands.add_parser("status", help="查看部署状态")
+    grant = commands.add_parser("svip-grant", help="向指定账号授予有期限的 SVIP 权益")
+    grant.add_argument("--user", required=True, help="账号 UUID")
+    grant.add_argument("--until", required=True, help="含时区的 ISO 8601 到期时间")
+    grant.add_argument("--reference", help="授权来源唯一凭据，重试使用同一值")
+    grant.add_argument("--source", default="manual")
+    grant.add_argument("--reason", default="人工开通")
+    revoke = commands.add_parser("svip-revoke", help="撤销指定授权，不影响其他有效授权")
+    revoke.add_argument("grant_id")
+    revoke.add_argument("--reason", required=True)
+    configure_ai = commands.add_parser("ai-configure", help="维护云端平台 AI；密钥通过终端隐蔽输入")
+    configure_ai.add_argument("--url", required=True)
+    configure_ai.add_argument("--models", required=True, help="允许模型标识，逗号分隔")
+    configure_ai.add_argument("--name", default="平台 AI")
+    configure_ai.add_argument("--internal", action="store_true", help="声明为平台自身处理，仍须照片处理同意")
+    configure_ai.add_argument("--disabled", action="store_true")
+    configure_ai.add_argument("--max-output-tokens", type=int, default=4096)
     pair = commands.add_parser("pairing", help="生成包含服务身份及 CA 指纹的配对信息")
     pair.add_argument("--certificate", required=True, help="Caddy 根证书的 PEM 或 DER 文件路径")
     discovery = commands.add_parser("advertise", help="在宿主网络发布内网发现")
@@ -137,6 +162,19 @@ def main():
         advertise(args)
         return
     service = Runtime(Settings.from_environment(), exclusive=args.command in ("backup", "restore"))
+    if args.command == "svip-grant":
+        print(json.dumps(service.entitlements.grant(args.user, args.until, args.source, args.reference,
+                                                   args.reason, operator="cli:" + getpass.getuser()), ensure_ascii=False, indent=2))
+        return
+    if args.command == "svip-revoke":
+        print(json.dumps(service.entitlements.revoke(args.grant_id, args.reason, operator="cli:" + getpass.getuser()), ensure_ascii=False, indent=2))
+        return
+    if args.command == "ai-configure":
+        key = getpass.getpass("平台 API 密钥（留空仅保留同一接口已有密钥）： ")
+        print(json.dumps(service.providers.configure_cloud(args.url, args.models.split(","), args.name,
+                         key or None, external=not args.internal, enabled=not args.disabled,
+                         max_output_tokens=args.max_output_tokens), ensure_ascii=False, indent=2))
+        return
     if args.command == "pairing":
         print(json.dumps(pairing(service, args.certificate), ensure_ascii=False, indent=2))
         return

@@ -6,6 +6,7 @@ from .challenges import ChallengeService
 from .config import Settings
 from .data_service import DataService
 from .database import Database
+from .entitlements import EntitlementService
 from .foods import FoodService
 from .jobs import JobRunner
 from .maintenance import MaintenanceService
@@ -25,18 +26,20 @@ class Runtime:
         self.db = Database(self.settings.data_dir / "db" / "app.sqlite3")
         self.db.initialize()
         self.auth = AuthService(self.db, self.settings)
+        self.entitlements = EntitlementService(self.db, self.settings)
         self.records = RecordService(self.db, self.settings)
         self.media = MediaService(self.db, self.settings)
+        self.media.entitlements = self.entitlements
         self.challenges = ChallengeService(self.db, self.records)
         self.records.challenge_service = self.challenges
-        self.providers = ProviderService(self.db, self.settings)
-        self.ai = AIService(self.db, self.settings, self.media, self.providers)
+        self.providers = ProviderService(self.db, self.settings, self.entitlements)
+        self.ai = AIService(self.db, self.settings, self.media, self.providers, self.entitlements)
         self.data = DataService(self.db, self.settings, self.records, self.media)
         self.maintenance = MaintenanceService(self.db, self.settings, self.media)
         self.push = PushService(self.db, self.settings)
         self.foods = FoodService(self.settings, self.records)
         self.jobs = JobRunner(self.db, self.settings, self.ai, self.data, self.challenges,
-                              self.maintenance, self.push, self.media)
+                              self.maintenance, self.push, self.media, self.auth.email)
 
     def acquire_instance(self):
         self.lock_file = (self.settings.data_dir / "db" / "instance.lock").open("a+b")

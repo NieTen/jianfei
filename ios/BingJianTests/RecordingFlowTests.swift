@@ -110,6 +110,75 @@ final class RecordingFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testMissingSessionKeepsBoundLocalRecordsAndAllowsOfflineRecording() async throws {
+        try await isolated { model in
+            let originalNamespace = try XCTUnwrap(UserDefaults.standard.string(forKey: "local_namespace"))
+            let input = OnboardingInput(age: 30, heightCm: 175, weight: 70, unit: .kg, sex: "male")
+            let profileId = UUID().uuidString.lowercased(), weightId = UUID().uuidString.lowercased()
+            try await model.finishOnboarding(input, profileId: profileId, weightId: weightId, offline: true)
+            let originalStore = try model.requireStore()
+            try await originalStore.setMetadata("bound_user", value: "test-instance:test-user")
+
+            // 模拟重签后后台会话不可读；本机资料和记录仍属于原数据空间。
+            let reopened = AppModel()
+            await reopened.start()
+            XCTAssertNil(reopened.session)
+            XCTAssertEqual(UserDefaults.standard.string(forKey: "local_namespace"), originalNamespace)
+            XCTAssertEqual(Set(reopened.records.map(\.id)), Set([profileId, weightId]))
+            XCTAssertTrue(reopened.profileSetupCompleted)
+            XCTAssertTrue(reopened.setupCompleted)
+            XCTAssertEqual(reopened.profile.age, 30)
+            XCTAssertEqual(reopened.summary.weight, 70)
+
+            try await reopened.recordWeight(71, unit: .kg, measuredAt: reopened.entryDate, note: "", representative: false)
+            let savedRecords = try await originalStore.allRecords()
+            let binding = try await originalStore.metadata("bound_user")
+            XCTAssertEqual(savedRecords.filter { $0.kind == "weight" }.count, 2)
+            XCTAssertTrue(savedRecords.contains { $0.id == weightId })
+            XCTAssertEqual(binding, "test-instance:test-user")
+            XCTAssertEqual(UserDefaults.standard.string(forKey: "local_namespace"), originalNamespace)
+            XCTAssertNil(reopened.session)
+        }
+    }
+
+    @MainActor
+    func testExplicitLogoutKeepsOldRecordsIsolatedAfterRelaunch() async throws {
+        try await isolated { model in
+            let defaults = UserDefaults.standard
+            let originalNamespace = try XCTUnwrap(defaults.string(forKey: "local_namespace"))
+            let input = OnboardingInput(age: 30, heightCm: 175, weight: 70, unit: .kg, sex: "male")
+            let profileId = UUID().uuidString.lowercased(), weightId = UUID().uuidString.lowercased()
+            try await model.finishOnboarding(input, profileId: profileId, weightId: weightId, offline: true)
+            let originalStore = try model.requireStore()
+            try await originalStore.setMetadata("bound_user", value: "test-instance:test-user")
+            await model.start()
+
+            await model.logout()
+            let anonymousNamespace = try XCTUnwrap(defaults.string(forKey: "local_namespace"))
+            XCTAssertNotEqual(anonymousNamespace, originalNamespace)
+            XCTAssertEqual(anonymousNamespace, defaults.string(forKey: "anonymous_namespace"))
+            XCTAssertTrue(model.records.isEmpty)
+            XCTAssertNil(model.session)
+
+            // 主动退出已经选择匿名空间，后续无会话启动也不能重开退出前的账号库。
+            let reopened = AppModel()
+            await reopened.start()
+            XCTAssertEqual(defaults.string(forKey: "local_namespace"), anonymousNamespace)
+            XCTAssertTrue(reopened.records.isEmpty)
+            XCTAssertNil(reopened.session)
+            let anonymousStore = try reopened.requireStore()
+            let anonymousBinding = try await anonymousStore.metadata("bound_user")
+            XCTAssertNil(anonymousBinding)
+
+            let retainedStore = try LocalDatabase(namespace: originalNamespace)
+            let retainedRecords = try await retainedStore.allRecords()
+            let retainedBinding = try await retainedStore.metadata("bound_user")
+            XCTAssertEqual(Set(retainedRecords.map(\.id)), Set([profileId, weightId]))
+            XCTAssertEqual(retainedBinding, "test-instance:test-user")
+        }
+    }
+
+    @MainActor
     func testHomeSelectedDateAndEditedWeightKeepCorrectDate() async throws {
         try await isolated { model in
             var profile = BodyProfile()
@@ -129,15 +198,30 @@ final class RecordingFlowTests: XCTestCase {
     @MainActor
     private func isolated(_ action: (AppModel) async throws -> Void) async throws {
         let defaults = UserDefaults.standard
-        let keys = ["local_namespace", "setup_completed", "sync_enabled", AppModel.weightUnitPreferenceKey]
+        let keys = ["local_namespace", "anonymous_namespace", "setup_completed", "sync_enabled", "health_enabled",
+                    "server_url", "device_id", AppModel.weightUnitPreferenceKey]
         let previous = keys.map { defaults.object(forKey: $0) }
+        let previousSession = KeychainStore.read("active_session")
         let namespace = "entry-test-" + UUID().uuidString.lowercased()
+        let anonymousNamespace = namespace + "-anonymous"
         defaults.set(namespace, forKey: "local_namespace")
+        defaults.set(anonymousNamespace, forKey: "anonymous_namespace")
         defaults.set(false, forKey: "sync_enabled")
+        defaults.set(false, forKey: "health_enabled")
         defaults.set(false, forKey: "setup_completed")
+        defaults.set("https://recording-tests.invalid", forKey: "server_url")
+        KeychainStore.delete("active_session")
         defer {
-            defaults.removeObject(forKey: "body_setup_completed:" + namespace)
+            for value in [namespace, anonymousNamespace] {
+                defaults.removeObject(forKey: "body_setup_completed:" + value)
+                defaults.removeObject(forKey: "external_ai_consent:" + value)
+            }
             for (key, value) in zip(keys, previous) { defaults.set(value, forKey: key) }
+            if let previousSession {
+                XCTAssertNoThrow(try KeychainStore.save(previousSession, key: "active_session"))
+            } else {
+                KeychainStore.delete("active_session")
+            }
         }
         try await action(AppModel())
     }

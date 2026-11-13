@@ -12,6 +12,8 @@ from .models import (
     DeviceAction, EncouragementRequest, ExportRequest, IdentityBinding, Login, MediaInit,
     Mutation, PushRegistration, PushRequest, RecognitionRequest, RecoveryRequest, AISettingsRequest,
     RefreshRequest, Registration,
+    EmailCodeRequest, EmailResetRequest, PasswordChangeRequest, EmailBindingCodeRequest, EmailBindingRequest,
+    AIConsentRequest, AIPreferenceRequest,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -35,6 +37,15 @@ def version():
     return {"version": "0.1.9", "api_version": 1, "minimum_client": 1, "maximum_client": 1}
 
 
+@router.get("/app/config")
+def app_configuration(request: Request):
+    settings = runtime(request).settings
+    cloud = settings.deployment_mode == "cloud"
+    return {"deployment_mode": settings.deployment_mode, "email_auth_enabled": cloud or bool(settings.smtp_host),
+            "registration_requires_email_verification": cloud, "ai_execution": "gateway_only" if cloud else "private",
+            "api_version": 1}
+
+
 @router.get("/server-info")
 def server_info(request: Request):
     return runtime(request).records.public_identity()
@@ -44,6 +55,7 @@ def server_info(request: Request):
 def capabilities(request: Request, identity=Depends(actor)):
     service = runtime(request)
     return {**service.records.handshake(identity), "ai": service.ai.provider_info(identity["user_id"]),
+            "deployment_mode": service.settings.deployment_mode, "entitlements": service.entitlements.public(identity),
             "push_available": service.push.configured(), "food_database_available": bool(service.settings.food_api_key),
             "max_members": 8, "max_photos": 6, "ai_timeout_seconds": 360}
 
@@ -62,6 +74,66 @@ def login(payload: Login, request: Request):
 @router.post("/auth/refresh")
 def refresh(payload: RefreshRequest, request: Request):
     return runtime(request).auth.refresh(payload.refresh_token)
+
+
+@router.post("/auth/email-code")
+def email_code(payload: EmailCodeRequest, request: Request):
+    return runtime(request).auth.email.issue(payload.email, payload.purpose)
+
+
+@router.post("/auth/reset-password")
+def reset_password(payload: EmailResetRequest, request: Request):
+    return runtime(request).auth.reset_password(payload)
+
+
+@router.get("/me")
+def current_account(request: Request, identity=Depends(actor)):
+    return runtime(request).auth.me(identity)
+
+
+@router.post("/me/password")
+def change_password(payload: PasswordChangeRequest, request: Request, identity=Depends(actor)):
+    return runtime(request).auth.change_password(identity, payload)
+
+
+@router.post("/me/email-code")
+def bind_email_code(payload: EmailBindingCodeRequest, request: Request, identity=Depends(actor)):
+    return runtime(request).auth.email_binding_code(identity, payload)
+
+
+@router.put("/me/email")
+def bind_email(payload: EmailBindingRequest, request: Request, identity=Depends(actor)):
+    return runtime(request).auth.bind_email(identity, payload)
+
+
+@router.post("/auth/logout-all")
+def logout_all(request: Request, identity=Depends(actor)):
+    return runtime(request).auth.logout_all(identity)
+
+
+@router.get("/me/entitlements")
+def entitlements(request: Request, identity=Depends(actor)):
+    return runtime(request).entitlements.public(identity)
+
+
+@router.get("/me/ai-consent")
+def ai_consent(request: Request, identity=Depends(actor)):
+    return runtime(request).providers.consent(identity)
+
+
+@router.put("/me/ai-consent")
+def update_ai_consent(payload: AIConsentRequest, request: Request, identity=Depends(actor)):
+    return runtime(request).providers.consent(identity, payload)
+
+
+@router.get("/me/ai-preferences")
+def ai_preferences(request: Request, identity=Depends(actor)):
+    return runtime(request).providers.preferences(identity)
+
+
+@router.put("/me/ai-preferences")
+def update_ai_preferences(payload: AIPreferenceRequest, request: Request, identity=Depends(actor)):
+    return runtime(request).providers.preferences(identity, payload.model_id)
 
 
 @router.post("/auth/recover")
@@ -163,6 +235,10 @@ def recognize(payload: RecognitionRequest, request: Request, identity=Depends(ac
 
 @router.get("/ai/settings")
 def ai_settings(request: Request, identity=Depends(actor)):
+    service = runtime(request)
+    if service.settings.deployment_mode == "cloud":
+        with service.db.read() as repo:
+            service.entitlements.require(repo, identity["user_id"])
     return runtime(request).providers.public_configuration(identity["user_id"])
 
 

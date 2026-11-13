@@ -150,7 +150,26 @@ struct ConnectionSetupView: View {
                         StatusPill(title: "支持离线记录", symbol: "iphone")
                     }
                     PageHeading(title: "最后，连接你的服务",
-                                subtitle: "第 3 步，共 3 步。后台与 AI 可稍后配置；身体信息会保存在本机。", artwork: .connection)
+                                subtitle: "第 3 步，共 3 步。可以登录云端账号，也可以先离线记录；身体信息先保存在本机。", artwork: .connection)
+                    Surface {
+                        HStack(spacing: 12) {
+                            SymbolBadge(symbol: "person.crop.circle")
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("云端账号").font(.headline).foregroundStyle(Palette.ink)
+                                Text("跨设备保留自己的记录").font(.caption).foregroundStyle(Palette.secondary)
+                            }
+                        }
+                        if model.cloudServerConfigured {
+                            NavigationLink(model.isCloudMode && model.cloudServerSelected && model.session != nil ? "查看云端账号" : "登录或注册云端账号") {
+                                CloudAccountView()
+                            }.frame(minHeight: 44, alignment: .leading)
+                            HintLabel(text: "基础记录与同步可继续使用，AI 识图由云端账号的 SVIP 权益控制。")
+                        } else {
+                            Text("当前版本尚未启用官方云服务，可以先离线记录或连接已有的私有服务器。")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                    if !model.isCloudMode {
                     Surface {
                         HStack(spacing: 12) {
                             SymbolBadge(symbol: "externaldrive")
@@ -164,11 +183,14 @@ struct ConnectionSetupView: View {
                                 .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         }
                         Button("测试并保存地址") {
+                            let context = model.localDataContext
+                            checking = true
                             Task {
-                                checking = true
-                                defer { checking = false }
-                                do { try await model.checkConnection() }
-                                catch { message = error.localizedDescription }
+                                defer { if context == model.localDataContext { checking = false } }
+                                do {
+                                    guard context == model.localDataContext else { return }
+                                    try await model.checkConnection()
+                                } catch { if context == model.localDataContext { message = error.localizedDescription } }
                             }
                         }.buttonStyle(SoftActionStyle()).disabled(checking || model.serverURL.isEmpty)
                         if checking { ProgressView() }
@@ -176,23 +198,36 @@ struct ConnectionSetupView: View {
                         NavigationLink("使用部署者的配对信息") { ServerPairingView() }.frame(minHeight: 44, alignment: .leading)
                         HintLabel(text: "支持 HTTP 和 HTTPS，保存后自动复用。HTTP 明文传输，建议仅在可信局域网使用。")
                     }
-                    Surface {
-                        HStack(spacing: 12) {
-                            SymbolBadge(symbol: "sparkles", color: Palette.purple)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("让记录轻松一点").font(.headline).foregroundStyle(Palette.ink)
-                                Text("配置 AI 接口与模型").font(.caption).foregroundStyle(Palette.secondary)
+                    }
+                    if model.canUseAI {
+                        Surface {
+                            HStack(spacing: 12) {
+                                SymbolBadge(symbol: "sparkles", color: Palette.purple)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("让记录轻松一点").font(.headline).foregroundStyle(Palette.ink)
+                                    Text(model.isCloudMode ? "云端模型与照片处理授权" : "配置 AI 接口与模型")
+                                        .font(.caption).foregroundStyle(Palette.secondary)
+                                }
+                            }
+                            if model.isCloudMode {
+                                Text(model.cloudAI.text("provider_name", fallback: "云端餐食识别"))
+                                    .font(.subheadline)
+                                NavigationLink("核对云端 AI 与照片授权") { AIConnectionEditorView() }
+                                    .frame(minHeight: 44, alignment: .leading)
+                                HintLabel(text: "仅在你同意处理照片后使用云端识别，也可以随时手动记录。")
+                            } else {
+                                if model.aiConfiguration.configured {
+                                    Text(model.aiConfiguration.model).font(.subheadline)
+                                    Text(model.aiConfiguration.baseUrl).font(.caption).foregroundStyle(.secondary)
+                                } else {
+                                    Text("支持 Responses API 风格的接口，可读取模型列表或手动填写模型。")
+                                        .font(.subheadline).foregroundStyle(.secondary)
+                                }
+                                NavigationLink("设置 AI 地址、密钥和模型") { AIConnectionEditorView() }
+                                    .frame(minHeight: 44, alignment: .leading)
+                                HintLabel(text: "也可以先使用本机识别或手动记录，之后再配置 AI。")
                             }
                         }
-                        if model.aiConfiguration.configured {
-                            Text(model.aiConfiguration.model).font(.subheadline)
-                            Text(model.aiConfiguration.baseUrl).font(.caption).foregroundStyle(.secondary)
-                        } else {
-                            Text("支持 Responses API 风格的接口，可读取模型列表或手动填写模型。")
-                                .font(.subheadline).foregroundStyle(.secondary)
-                        }
-                        NavigationLink("设置 AI 地址、密钥和模型") { AIConnectionEditorView() }.frame(minHeight: 44, alignment: .leading)
-                        HintLabel(text: "也可以先使用本机识别或手动记录，之后再配置 AI。")
                     }
                 }.padding(16)
             }
@@ -209,6 +244,7 @@ struct ConnectionSetupView: View {
             .background(Palette.canvas).navigationTitle("连接服务").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("上一步", action: onBack).disabled(checking) } }
         }
+        .onChange(of: model.localDataContext) { _, _ in checking = false; message = nil }
         .alert("连接尚未完成", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("知道了", role: .cancel) {}
         } message: { Text(message ?? "") }

@@ -111,6 +111,13 @@ class Repository:
         ).fetchone()
         return row["sequence"]
 
+    def ai_usage_count(self, user_id, usage_day):
+        row = self.connection.execute(
+            "SELECT COUNT(task_id) AS total FROM ai_usage WHERE user_id = ? AND usage_day = ? AND status != ?",
+            (user_id, usage_day, "released"),
+        ).fetchone()
+        return row["total"]
+
     def copy_snapshot(self, snapshot_id, user_id):
         rows = self.connection.execute(
             "SELECT id, kind, payload, business_date, source_id, version, deleted_at, updated_at, device_id "

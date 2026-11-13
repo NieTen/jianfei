@@ -28,12 +28,17 @@ def normalized_ai_url(value):
 
 
 class ProviderService:
-    def __init__(self, database, settings):
+    def __init__(self, database, settings, entitlements=None):
         self.db = database
         self.settings = settings
         secret = load_secret(settings.data_dir / "secrets" / "providers.key")
         self.cipher = Fernet(base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest()))
         self.model_cache = {}
+        self.entitlements = entitlements
+
+    @property
+    def cloud(self):
+        return self.settings.deployment_mode == "cloud"
 
     def seal(self, configuration):
         return self.cipher.encrypt(json.dumps(configuration, ensure_ascii=False).encode()).decode()
@@ -42,6 +47,19 @@ class ProviderService:
         return json.loads(self.cipher.decrypt(value.encode()))
 
     def configuration(self, user_id):
+        if self.cloud:
+            with self.db.read() as repo:
+                row = repo.one("cloud_ai_provider", {"id": "platform", "enabled": 1})
+                preference = repo.one("cloud_ai_preferences", {"user_id": user_id})
+            if not row:
+                raise AppError("AI_UNAVAILABLE", "平台 AI 服务尚未配置", 503, True)
+            models = json.loads(row["models"])
+            model = preference["model_id"] if preference and preference["model_id"] in models else models[0]
+            return {"base_url": row["base_url"], "model": model,
+                    "api_key": self.cipher.decrypt(row["encrypted_key"].encode()).decode() if row["encrypted_key"] else "",
+                    "external": bool(row["external"]), "structured_output": True,
+                    "max_output_tokens": row["max_output_tokens"], "protocol": "responses",
+                    "version": row["revision"], "source": "platform", "provider_name": row["name"]}
         with self.db.read() as repo:
             row = repo.one("ai_settings", {"user_id": user_id})
         if row:
@@ -60,6 +78,17 @@ class ProviderService:
         }
 
     def public_configuration(self, user_id):
+        if self.cloud:
+            with self.db.read() as repo:
+                row = repo.one("cloud_ai_provider", {"id": "platform"})
+                preference = repo.one("cloud_ai_preferences", {"user_id": user_id})
+                allowed = bool(self.entitlements and self.entitlements.active_grants(repo, user_id))
+            models = json.loads(row["models"]) if row else []
+            model = preference["model_id"] if preference and preference["model_id"] in models else next(iter(models), "")
+            return {"source": "platform", "configured": bool(row and row["enabled"]),
+                    "provider_name": row["name"] if row else "平台 AI", "version": row["revision"] if row else 0,
+                    "external": bool(row["external"]) if row else True, "model": model if allowed else "",
+                    "protocol": "responses", "execution": "gateway", "has_api_key": False}
         value = self.configuration(user_id)
         return {key: item for key, item in value.items() if key != "api_key"} | {
             "has_api_key": bool(value["api_key"]), "configured": bool(value["base_url"] and value["model"]),
@@ -85,6 +114,8 @@ class ProviderService:
             raise AppError("AI_HOST_NOT_ALLOWED", "该内网 AI 主机需加入后台 AI_ALLOWED_HOSTS，也可在 App 中选择手机直连", 403)
 
     def save(self, actor, request):
+        if self.cloud:
+            raise AppError("PLATFORM_CONFIG_MANAGED", "平台 AI 配置仅可由管理员维护", 403)
         url = normalized_ai_url(request.base_url)
         self.validate_destination(url)
         with self.db.transaction() as repo:
@@ -128,6 +159,8 @@ class ProviderService:
         return self.public_configuration(actor["user_id"])
 
     def remove(self, actor):
+        if self.cloud:
+            raise AppError("PLATFORM_CONFIG_MANAGED", "平台 AI 配置仅可由管理员维护", 403)
         with self.db.transaction() as repo:
             validate_actor(repo, actor)
             repo.delete("ai_settings", {"user_id": actor["user_id"]})
@@ -136,6 +169,9 @@ class ProviderService:
         return self.public_configuration(actor["user_id"])
 
     async def models(self, actor, refresh=False):
+        if self.cloud:
+            value = self.preferences(actor)
+            return {"models": value["models"], "selected_model": value["model_id"], "message": "平台允许的识图模型"}
         configuration = self.configuration(actor["user_id"])
         if not configuration["base_url"]:
             raise AppError("AI_NOT_CONFIGURED", "请先保存 AI 接口配置")
@@ -162,10 +198,92 @@ class ProviderService:
         return result
 
     async def test(self, actor):
+        if self.cloud:
+            raise AppError("PLATFORM_CONFIG_MANAGED", "平台连接检查仅由管理员执行", 403)
         value = await self.models(actor, refresh=True)
         selected = value["selected_model"]
         return {"connected": True, "model_listed": any(row["id"] == selected for row in value["models"]),
                 "model": selected, "protocol": "responses", "message": "接口连接成功，所选模型的图像能力在首次识别时校验"}
+
+    def configure_cloud(self, base_url, models, name="平台 AI", api_key=None, external=True, enabled=True, max_output_tokens=4096):
+        """仅由受限 CLI 调用；没有接受普通账号写入平台配置的 HTTP 路由。"""
+        url = normalized_ai_url(base_url)
+        if not url.startswith("https://"):
+            raise AppError("INVALID_AI_URL", "云端 AI 提供方必须使用 HTTPS")
+        self.validate_destination(url)
+        models = list(dict.fromkeys(value.strip() for value in models if value.strip()))
+        if not models or any(len(value) > 200 for value in models) or not 256 <= max_output_tokens <= 32768:
+            raise AppError("INVALID_AI_CONFIGURATION", "请提供允许模型及有效输出上限")
+        with self.db.transaction() as repo:
+            existing = repo.one("cloud_ai_provider", {"id": "platform"})
+            if existing and existing["base_url"] != url and api_key is None:
+                raise AppError("AI_KEY_REQUIRED", "接口地址变化后请重新提供密钥")
+            encrypted = existing["encrypted_key"] if existing else ""
+            if api_key is not None:
+                encrypted = self.cipher.encrypt(api_key.encode()).decode() if api_key else ""
+            values = {"id": "platform", "name": name, "base_url": url, "models": json.dumps(models),
+                      "encrypted_key": encrypted, "external": int(external), "enabled": int(enabled),
+                      "max_output_tokens": max_output_tokens, "revision": existing["revision"] + 1 if existing else 1,
+                      "updated_at": now_iso()}
+            if existing:
+                repo.update("cloud_ai_provider", values, {"id": "platform"})
+            else:
+                repo.insert("cloud_ai_provider", values)
+            repo.audit("system", "cloud_ai_provider_updated", "platform")
+            # 版本号仍在每次上游请求前检查；主动终止已领取任务以阻止迟到结果落库。
+            users = {task["user_id"] for task in repo.find("tasks", {"kind": "recognition", "status__in": ["pending", "running", "unknown"]})}
+            for user_id in users:
+                self.entitlements.cancel_pending(repo, user_id, "平台 AI 配置已更新")
+        return {"provider_name": name, "provider_revision": values["revision"], "models": models, "enabled": bool(enabled)}
+
+    def preferences(self, actor, model_id=None):
+        with self.db.transaction() as repo:
+            validate_actor(repo, actor)
+            self.entitlements.require(repo, actor["user_id"])
+            row = repo.one("cloud_ai_provider", {"id": "platform", "enabled": 1})
+            if not row:
+                raise AppError("AI_UNAVAILABLE", "平台 AI 服务尚未配置", 503, True)
+            models = json.loads(row["models"])
+            preference = repo.one("cloud_ai_preferences", {"user_id": actor["user_id"]})
+            if model_id is not None:
+                if model_id not in models:
+                    raise AppError("AI_MODEL_NOT_ALLOWED", "该模型不在平台允许列表中", 403)
+                values = {"user_id": actor["user_id"], "model_id": model_id, "updated_at": now_iso()}
+                if preference:
+                    repo.update("cloud_ai_preferences", values, {"user_id": actor["user_id"]})
+                else:
+                    repo.insert("cloud_ai_preferences", values)
+                preference = values
+            selected = preference["model_id"] if preference and preference["model_id"] in models else models[0]
+            return {"model_id": selected, "models": [{"id": model, "name": model} for model in models],
+                    "provider_name": row["name"], "provider_revision": row["revision"], "external": bool(row["external"])}
+
+    def consent(self, actor, request=None):
+        with self.db.transaction() as repo:
+            validate_actor(repo, actor)
+            provider = repo.one("cloud_ai_provider", {"id": "platform"})
+            revision = provider["revision"] if provider else 0
+            row = repo.one("cloud_ai_consents", {"user_id": actor["user_id"]})
+            if request is not None:
+                if request.allowed:
+                    self.entitlements.require(repo, actor["user_id"])
+                    if not provider or not provider["enabled"]:
+                        raise AppError("AI_UNAVAILABLE", "平台 AI 服务尚未配置", 503, True)
+                    if request.provider_revision != revision:
+                        raise AppError("PROVIDER_CHANGED", "提供方已变化，请重新阅读照片处理说明", 409)
+                values = {"user_id": actor["user_id"], "allowed": int(request.allowed),
+                          "revision": (row["revision"] if row else 0) + 1,
+                          "provider_revision": revision, "updated_at": now_iso()}
+                if row:
+                    repo.update("cloud_ai_consents", values, {"user_id": actor["user_id"]})
+                else:
+                    repo.insert("cloud_ai_consents", values)
+                row = values
+                self.entitlements.cancel_pending(repo, actor["user_id"], "照片处理授权已变化")
+                repo.audit(actor["user_id"], "ai_consent_changed")
+            return {"allowed": bool(row and row["allowed"] and row["provider_revision"] == revision and provider and provider["enabled"]),
+                    "revision": row["revision"] if row else 0, "provider_revision": revision,
+                    "provider_name": provider["name"] if provider else "平台 AI", "external": bool(provider["external"]) if provider else True}
 
     @staticmethod
     def check_response(response):

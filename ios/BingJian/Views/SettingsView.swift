@@ -27,13 +27,20 @@ struct SettingsView: View {
                 }
                 Text("连接与数据").font(.headline).foregroundStyle(Palette.ink).padding(.horizontal, 4)
                 Surface {
-                    NavigationLink { AISettingsView() } label: {
-                        SettingsRow(title: "AI 与个性化估算", symbol: "sparkle",
-                                    detail: model.aiConfiguration.configured ? model.aiConfiguration.model : "设置接口与模型", color: Palette.purple)
+                    if model.canUseAI {
+                        NavigationLink { AISettingsView() } label: {
+                            SettingsRow(title: "AI 与个性化估算", symbol: "sparkle",
+                                        detail: model.isCloudMode ? model.cloudAI.text("model_id") : (model.aiConfiguration.configured ? model.aiConfiguration.model : "设置接口与模型"), color: Palette.purple)
+                        }
+                        Divider()
                     }
-                    Divider()
-                    NavigationLink { ConnectionSettingsView() } label: {
-                        SettingsRow(title: "私有服务器与账号", symbol: "externaldrive", detail: "后台地址保存后自动使用")
+                    NavigationLink { CloudAccountView() } label: {
+                        SettingsRow(title: "云端账号与 SVIP", symbol: "person.crop.circle", detail: model.isCloudMode ? model.aiAccessMessage : "云端登录与会员状态")
+                    }
+                    if !model.isCloudMode {
+                        NavigationLink { ConnectionSettingsView() } label: {
+                            SettingsRow(title: "私有服务器与账号", symbol: "externaldrive", detail: "后台地址保存后自动使用")
+                        }
                     }
                     NavigationLink { HealthSettingsView() } label: { SettingsRow(title: "健康权限与历史回填", symbol: "heart", color: Palette.peach) }
                     NavigationLink { SyncStatusView() } label: { SettingsRow(title: "同步状态与冲突", symbol: "arrow.triangle.2.circlepath") }
@@ -86,6 +93,11 @@ struct ConnectionSettingsView: View {
     }
 
     var body: some View {
+        if model.isCloudMode { CloudAccountView() }
+        else { privateServerForm }
+    }
+
+    private var privateServerForm: some View {
         AppForm {
             FormIntro(title: "连接你的记录空间", subtitle: "后台地址只需保存一次，之后可随时在这里更改。", symbol: "externaldrive", color: Palette.teal)
             Section("私有服务器") {
@@ -226,109 +238,224 @@ struct DeviceManagementView: View {
     }
 }
 
+enum SyncStatusSection: Equatable {
+    case all, logs, commands, failures, conflicts
+}
+
+/// 只保存当前页；向前翻页使用首条边界，不积累历史页面数组。
+struct LocalPageControls: View {
+    var previous: Bool
+    var next: Bool
+    var loading: Bool
+    var onPrevious: () -> Void
+    var onNext: () -> Void
+    var body: some View {
+        HStack {
+            Button("上一页", action: onPrevious).disabled(!previous || loading)
+            Spacer()
+            if loading { ProgressView() }
+            Text("每页 50 条").font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Button("下一页", action: onNext).disabled(!next || loading)
+        }.buttonStyle(.borderless)
+    }
+}
+
 struct SyncStatusView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var logs: [(String, String)] = []
-    @State private var commands: [JSONObject] = []
-    @State private var failures: [JSONObject] = []
+    @State private var overview = LocalSyncOverview()
+    @State private var logs = LocalPage<LocalDiagnosticLog>()
+    @State private var commands = LocalPage<LocalCommandSummary>()
+    @State private var failures = LocalPage<LocalFailedRecord>()
+    @State private var conflicts = LocalPage<LocalConflictSummary>()
+    @State private var loading = false
+    @State private var requestToken = UUID()
+    @State private var loadedContext: UUID?
+    @State private var message: String?
+
     var body: some View {
         AppList {
             FormIntro(title: "让记录保持同步", subtitle: "查看同步进度，处理需要确认的记录。", symbol: "arrow.triangle.2.circlepath", color: Palette.teal)
             Section("同步") {
                 Text(model.syncStatus)
-                LabeledContent("待同步记录", value: String(model.pendingCount))
-                Button("立即同步") { Task { await model.sync(); await load() } }.disabled(model.syncing)
-                Button("重试失败记录") {
-                    model.perform { try await model.requireStore().retryFailed(); await model.sync(); await load() }
+                LabeledContent("待同步记录", value: String(overview.pendingCount))
+                LabeledContent("失败记录", value: String(overview.failedCount))
+                LabeledContent("待处理冲突", value: String(overview.conflictCount))
+                LabeledContent("离线操作", value: String(overview.commandCount))
+                if let last = overview.lastSync {
+                    LabeledContent("最近同步", value: TimeFormat.parse(last)?.formatted(date: .abbreviated, time: .shortened) ?? last)
                 }
+                Text("待同步数量包含失败和冲突，均为尚未完成的操作；诊断日志单独保留。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("立即同步") { Task { await model.sync(); await load() } }.disabled(model.syncing || loading)
+                Button("重试失败记录") {
+                    Task {
+                        let context = model.localDataContext
+                        let changed = await changeQueue { store in try await store.retryFailed() }
+                        guard changed, context == model.localDataContext else { return }
+                        await model.sync()
+                        if context == model.localDataContext { await load() }
+                    }
+                }.disabled(model.syncing || loading || overview.failedCount == 0)
             }
-            Section("需要处理的冲突") {
-                if model.conflicts.isEmpty { Text("当前没有冲突").foregroundStyle(.secondary) }
-                ForEach(model.conflicts) { conflict in
+            if let message { Section { Text(message).foregroundStyle(.red) } }
+            Section("需要处理的冲突（\(overview.conflictCount)）") {
+                if conflicts.items.isEmpty { Text("本页没有冲突").foregroundStyle(.secondary) }
+                ForEach(conflicts.items) { conflict in
                     NavigationLink {
-                        ConflictDetailView(conflict: conflict)
+                        ConflictDetailView(conflictId: conflict.id)
                     } label: {
                         VStack(alignment: .leading) {
-                            Text("\(conflict.local.businessDate) · \(conflict.local.kind)")
+                            Text("\(conflict.businessDate) · \(conflict.kind)")
                             Text(conflict.message).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
+                controls(for: .conflicts, previous: conflicts.previousCursor, next: conflicts.nextCursor)
             }
-            if !failures.isEmpty {
-                Section("失败记录") {
-                    ForEach(failures.indices, id: \.self) { index in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(failures[index].text("message"))
-                            Text(failures[index].text("entity_id")).font(.caption2).foregroundStyle(.secondary)
-                        }
+            Section("失败记录（\(overview.failedCount)）") {
+                if failures.items.isEmpty { Text("本页没有失败记录").foregroundStyle(.secondary) }
+                ForEach(failures.items) { failure in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(failure.message)
+                        Text(failure.entityId).font(.caption2).foregroundStyle(.secondary)
                     }
                 }
+                controls(for: .failures, previous: failures.previousCursor, next: failures.nextCursor)
             }
-            Section("离线操作队列") {
-                ForEach(commands.indices, id: \.self) { index in
+            Section("离线操作队列（\(overview.commandCount)）") {
+                if commands.items.isEmpty { Text("本页没有排队操作").foregroundStyle(.secondary) }
+                ForEach(commands.items) { command in
                     VStack(alignment: .leading) {
-                        Text(commands[index].text("path")).font(.caption)
-                        Text((commands[index].number("priority") ?? 0) > 0 ? "授权或退出操作优先发送" : "等待发送").font(.caption2).foregroundStyle(.secondary)
+                        Text(command.path).font(.caption)
+                        Text(command.priority > 0 ? "授权或退出操作优先发送" : "等待发送").font(.caption2).foregroundStyle(.secondary)
                     }
                     .swipeActions {
                         Button("取消本机排队操作", role: .destructive) {
-                            model.perform {
-                                try await model.requireStore().removeCommand(commands[index].text("id"))
-                                await load()
-                            }
-                        }
+                            Task { _ = await changeQueue { store in try await store.removeCommand(command.id) } }
+                        }.disabled(loading || loadedContext != model.localDataContext)
                     }
                 }
+                controls(for: .commands, previous: commands.previousCursor, next: commands.nextCursor)
             }
-            Section("最近日志") {
-                ForEach(logs.indices, id: \.self) { index in
+            Section("最近诊断日志") {
+                Text("最多保留 200 条、14 天；相同诊断在 5 分钟内合并，旧版历史在后台分批整理。")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(logs.items) { log in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(logs[index].1).font(.subheadline)
-                        Text(TimeFormat.parse(logs[index].0)?.formatted(date: .abbreviated, time: .shortened) ?? logs[index].0)
+                        Text(log.message).font(.subheadline)
+                        Text(TimeFormat.parse(log.lastSeenAt)?.formatted(date: .abbreviated, time: .shortened) ?? log.lastSeenAt)
                             .font(.caption2).foregroundStyle(.secondary)
+                        if log.repeatCount > 1 { Text("重复 \(log.repeatCount) 次").font(.caption2).foregroundStyle(.secondary) }
                     }
                 }
+                controls(for: .logs, previous: logs.previousCursor, next: logs.nextCursor)
             }
-        }.navigationTitle("同步状态").task { await load() }
+        }
+        .navigationTitle("同步状态")
+        .task(id: model.localDataContext) {
+            clearPages()
+            await load()
+        }
+        .refreshable { await load() }
+        .onDisappear { requestToken = UUID() }
     }
-    private func load() async {
-        logs = (try? await model.requireStore().logs()) ?? []
-        commands = (try? await model.requireStore().pendingCommands()) ?? []
-        failures = (try? await model.requireStore().failedRecords()) ?? []
-        await model.reload()
+
+    private func controls(for section: SyncStatusSection, previous: LocalPageCursor?, next: LocalPageCursor?) -> some View {
+        LocalPageControls(previous: previous != nil, next: next != nil, loading: loading,
+            onPrevious: { Task { await load(section, before: previous) } },
+            onNext: { Task { await load(section, after: next) } })
+    }
+
+    private func clearPages() {
+        overview = LocalSyncOverview()
+        logs = LocalPage(); commands = LocalPage(); failures = LocalPage(); conflicts = LocalPage()
+        loadedContext = nil
+        message = nil
+    }
+
+    private func load(_ section: SyncStatusSection = .all, after: LocalPageCursor? = nil, before: LocalPageCursor? = nil) async {
+        let token = UUID(), context = model.localDataContext
+        requestToken = token
+        loading = true
+        defer { if requestToken == token { loading = false } }
+        do {
+            let store = try model.requireStore()
+            let summary = try await store.syncOverview()
+            let logPage = section == .all || section == .logs ? try await store.diagnosticLogsPage(after: after, before: before) : nil
+            let commandPage = section == .all || section == .commands ? try await store.commandsPage(after: after, before: before) : nil
+            let failurePage = section == .all || section == .failures ? try await store.failedRecordsPage(after: after, before: before) : nil
+            let conflictPage = section == .all || section == .conflicts ? try await store.conflictsPage(after: after, before: before) : nil
+            try Task.checkCancellation()
+            guard requestToken == token, model.localDataContext == context, store === (try model.requireStore()) else { return }
+            overview = summary
+            if let logPage { logs = logPage }
+            if let commandPage { commands = commandPage }
+            if let failurePage { failures = failurePage }
+            if let conflictPage { conflicts = conflictPage }
+            loadedContext = context
+            message = nil
+        } catch is CancellationError {
+        } catch {
+            guard requestToken == token, model.localDataContext == context else { return }
+            message = error.localizedDescription
+        }
+    }
+
+    private func changeQueue(_ action: (LocalDatabase) async throws -> Void) async -> Bool {
+        let context = model.localDataContext
+        guard loadedContext == context else { return false }
+        do {
+            let store = try model.requireStore()
+            try await action(store)
+            guard model.localDataContext == context, store === (try model.requireStore()) else { return false }
+            await load()
+            return model.localDataContext == context
+        } catch {
+            if model.localDataContext == context { message = error.localizedDescription }
+            return false
+        }
     }
 }
 
 struct ConflictDetailView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    let conflict: SyncConflict
+    let conflictId: String
+    @State private var conflict: SyncConflict?
+    @State private var loadedContext: UUID?
     @State private var mergedText = ""
     @State private var showMerge = false
+    @State private var loading = false
+    @State private var message: String?
+
     var body: some View {
         AppList {
             FormIntro(title: "确认要保留的内容", subtitle: "对照本机与后台版本，再决定如何合并。", symbol: "square.stack.3d.up", color: Palette.peach)
-            Section("本机版本") {
-                Text((try? Codec.json(conflict.local.payload)) ?? "").font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-            }
-            Section("服务器版本") {
-                Text(conflict.remote.flatMap { try? Codec.json($0.payload) } ?? "服务器已移除此记录")
-                    .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-            }
-            Section {
-                Button(conflict.remote?.deletedAt != nil || conflict.remote == nil ? "将本机内容另存为新记录" : "保留本机内容") {
-                    model.perform { try await model.resolveConflict(conflict, keepLocal: true); dismiss() }
+            if loading { ProgressView("读取冲突详情") }
+            if let message { Text(message).foregroundStyle(.secondary) }
+            if let conflict {
+                Section("本机版本") {
+                    Text((try? Codec.json(conflict.local.payload)) ?? "").font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                 }
-                Button("采用服务器版本") {
-                    model.perform { try await model.resolveConflict(conflict, keepLocal: false); dismiss() }
+                Section("服务器版本") {
+                    Text(conflict.remote.flatMap { try? Codec.json($0.payload) } ?? "服务器已移除此记录")
+                        .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                 }
-                Button("手动合并字段") {
-                    mergedText = (try? Codec.json(conflict.local.payload)) ?? "{}"
-                    showMerge = true
-                }.disabled(conflict.remote == nil || conflict.remote?.deletedAt != nil)
+                Section {
+                    Button(conflict.remote?.deletedAt != nil || conflict.remote == nil ? "将本机内容另存为新记录" : "保留本机内容") {
+                        Task { await resolve(conflict, keepLocal: true) }
+                    }
+                    Button("采用服务器版本") { Task { await resolve(conflict, keepLocal: false) } }
+                    Button("手动合并字段") {
+                        mergedText = (try? Codec.json(conflict.local.payload)) ?? "{}"
+                        showMerge = true
+                    }.disabled(conflict.remote == nil || conflict.remote?.deletedAt != nil)
+                }.disabled(loading || loadedContext != model.localDataContext)
             }
-        }.navigationTitle("合并记录")
+        }
+        .navigationTitle("合并记录")
+        .task(id: model.localDataContext) { await load() }
         .sheet(isPresented: $showMerge) {
             NavigationStack {
                 AppForm {
@@ -336,22 +463,52 @@ struct ConflictDetailView: View {
                     Section("合并后的字段") {
                         TextEditor(text: $mergedText).font(.system(.caption, design: .monospaced)).frame(minHeight: 300)
                     }
+                    if let message { Text(message).foregroundStyle(.red) }
                 }
                 .navigationTitle("字段合并")
                 .toolbar {
                     Button("提交合并") {
-                        model.perform {
-                            let payload = try JSONDecoder().decode(JSONObject.self, from: Data(mergedText.utf8))
-                            var merged = conflict
-                            merged.local.payload = payload
-                            try RecordValidator.validate(merged.local)
-                            try await model.resolveConflict(merged, keepLocal: true)
-                            showMerge = false
-                            dismiss()
+                        Task {
+                            guard var merged = conflict else { return }
+                            do {
+                                merged.local.payload = try JSONDecoder().decode(JSONObject.self, from: Data(mergedText.utf8))
+                                try RecordValidator.validate(merged.local)
+                                await resolve(merged, keepLocal: true)
+                            } catch { message = error.localizedDescription }
                         }
-                    }
+                    }.disabled(loading || loadedContext != model.localDataContext)
                 }
             }
         }
+    }
+
+    private func load() async {
+        let context = model.localDataContext
+        conflict = nil; loadedContext = nil; showMerge = false; message = nil
+        loading = true
+        defer { if context == model.localDataContext { loading = false } }
+        do {
+            let store = try model.requireStore()
+            let value = try await store.conflict(conflictId)
+            try Task.checkCancellation()
+            guard context == model.localDataContext, store === (try model.requireStore()) else { return }
+            conflict = value
+            loadedContext = context
+            if value == nil { message = "这条冲突已处理，请返回同步状态刷新。" }
+        } catch is CancellationError {
+        } catch { if context == model.localDataContext { message = error.localizedDescription } }
+    }
+
+    private func resolve(_ value: SyncConflict, keepLocal: Bool) async {
+        let context = model.localDataContext
+        guard loadedContext == context else { return }
+        loading = true
+        defer { if context == model.localDataContext { loading = false } }
+        do {
+            try await model.resolveConflict(value, keepLocal: keepLocal)
+            guard context == model.localDataContext else { return }
+            showMerge = false
+            dismiss()
+        } catch { if context == model.localDataContext { message = error.localizedDescription } }
     }
 }

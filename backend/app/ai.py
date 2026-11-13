@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import uuid
 from datetime import timedelta
@@ -15,14 +16,19 @@ from .security import now_iso, utc_now
 
 
 class AIService:
-    def __init__(self, database, settings, media, providers):
+    def __init__(self, database, settings, media, providers, entitlements=None):
         self.db = database
         self.settings = settings
         self.media = media
         self.providers = providers
+        self.entitlements = entitlements
         self.schema = json.loads((Path(__file__).parent / "resources" / "food_schema.json").read_text(encoding="utf-8"))
 
     def create(self, actor, request):
+        if self.providers.cloud:
+            with self.db.read() as repo:
+                validate_actor(repo, actor)
+                self.entitlements.check_consent(repo, actor["user_id"], request.provider_revision, request.consent_revision)
         configuration = self.providers.configuration(actor["user_id"])
         if not configuration["base_url"]:
             raise AppError("PROVIDER_UNAVAILABLE", "服务器尚未配置 AI 服务，可使用本机识别或手动记录", 503, True)
@@ -32,56 +38,134 @@ class AIService:
             raise AppError("AI_MODEL_REQUIRED", "请先在 AI 设置中选择或填写模型")
         with self.db.transaction() as repo:
             validate_actor(repo, actor)
+            if self.providers.cloud:
+                self.entitlements.check_consent(repo, actor["user_id"], request.provider_revision, request.consent_revision)
             old = repo.one("tasks", {"user_id": actor["user_id"], "kind": "recognition", "request_key": request.request_key})
             if old:
                 prior_request = {key: value for key, value in json.loads(old["payload"]).items() if not key.startswith("_")}
+                # 为升级前的私有任务补上新增可选字段，保持原幂等行为。
+                prior_request.setdefault("consent_revision", None)
+                prior_request.setdefault("provider_revision", None)
                 if prior_request != request.model_dump():
                     raise AppError("IDEMPOTENCY_CONFLICT", "识别请求标识已用于其他内容", 409)
                 return self.public_task(old)
+            meal = repo.one("entities", {"user_id": actor["user_id"], "id": request.meal_id})
+            if self.providers.cloud:
+                self.validate_meal_input(meal, request.model_dump())
             for photo_id in request.photo_ids:
-                if not repo.one("media", {"id": self.media.safe_id(photo_id), "user_id": actor["user_id"], "status": "ready"}):
+                media = repo.one("media", {"id": self.media.safe_id(photo_id), "user_id": actor["user_id"], "status": "ready"})
+                if not media:
                     raise AppError("ATTACHMENT_PENDING", "照片还没有上传完成", 409, True)
+                if self.providers.cloud and media["meal_id"] != request.meal_id:
+                    raise AppError("PHOTO_CHANGED", "照片不属于当前餐次", 409)
             task_payload = request.model_dump()
-            task_payload["_provider_snapshot"] = self.providers.seal(configuration)
+            if self.providers.cloud:
+                session = repo.one("sessions", {"id": actor["session_id"]})
+                task_payload["_cloud_context"] = {"generation": actor["generation"], "device_id": actor["device_id"],
+                                                  "family_id": session["family_id"], "model": configuration["model"],
+                                                  "meal_signature": self.meal_signature(meal)}
+            else:
+                task_payload["_provider_snapshot"] = self.providers.seal(configuration)
             task = {
                 "id": str(uuid.uuid4()), "user_id": actor["user_id"], "kind": "recognition",
                 "status": "pending", "request_key": request.request_key,
                 "payload": json.dumps(task_payload, ensure_ascii=False),
                 "created_at": now_iso(), "updated_at": now_iso(),
             }
+            if self.providers.cloud:
+                self.entitlements.reserve(repo, actor["user_id"], task["id"], request.request_key)
             repo.insert("tasks", task)
             return self.public_task(task)
 
     def public_task(self, task):
-        return {
+        value = {
             "id": task["id"], "kind": task["kind"], "status": task["status"],
             "result": json.loads(task["result"]) if task.get("result") else None,
             "error": task.get("error"), "created_at": task["created_at"], "updated_at": task["updated_at"],
         }
+        if task["kind"] == "recognition":
+            request = json.loads(task["payload"])
+            value["request_context"] = {key: request.get(key) for key in ("meal_id", "meal_version", "photo_ids", "note")}
+        return value
 
     def task(self, actor, task_id):
         with self.db.read() as repo:
+            validate_actor(repo, actor)
             task = repo.one("tasks", {"id": task_id, "user_id": actor["user_id"]})
             if not task:
                 raise AppError("NOT_FOUND", "任务不存在", 404)
-            return self.public_task(task)
+            public = self.public_task(task)
+            if self.providers.cloud and task["kind"] == "recognition":
+                payload = json.loads(task["payload"])
+                meal = repo.one("entities", {"id": payload.get("meal_id"), "user_id": actor["user_id"]})
+                signature = (payload.get("_cloud_context") or {}).get("meal_signature")
+                public["request_context"]["meal_unchanged"] = bool(signature and meal and not meal["deleted_at"] and self.meal_signature(meal) == signature)
+                try:
+                    self.entitlements.check_consent(repo, actor["user_id"], payload.get("provider_revision"), payload.get("consent_revision"))
+                except AppError:
+                    public["result"] = None
+                    public["result_withheld"] = True
+            return public
 
     def cancel(self, actor, task_id):
         with self.db.transaction() as repo:
             validate_actor(repo, actor)
-            task = repo.one("tasks", {"id": task_id, "user_id": actor["user_id"]})
+            task = repo.one("tasks", {"id": task_id, "user_id": actor["user_id"], "kind": "recognition"})
             if not task:
                 raise AppError("NOT_FOUND", "任务不存在", 404)
             payload = json.loads(task["payload"])
             payload.pop("_provider_snapshot", None)
             repo.update("tasks", {"status": "cancelled", "payload": json.dumps(payload), "updated_at": now_iso()}, {"id": task_id})
+            if self.providers.cloud:
+                self.entitlements.settle(repo, task_id)
         return {"cancelled": True}
+
+    def check_cloud_task(self, repo, task, request):
+        context = request.get("_cloud_context") or {}
+        self.entitlements.check_consent(repo, task["user_id"], request.get("provider_revision"), request.get("consent_revision"))
+        user = repo.one("users", {"id": task["user_id"], "status": "active"})
+        device = repo.one("devices", {"id": context.get("device_id"), "user_id": task["user_id"], "revoked_at": None})
+        session = repo.one("sessions", {"family_id": context.get("family_id"), "user_id": task["user_id"], "revoked_at": None,
+                                        "refresh_expires_at__gt": now_iso()})
+        latest = repo.one("tasks", {"id": task["id"]})
+        if not user or user["generation"] != context.get("generation") or not device or not session or not latest or latest["status"] == "cancelled":
+            raise AppError("TASK_CANCELLED", "账号、设备或任务状态已变化，识别已停止", 409)
+        meal = repo.one("entities", {"id": request["meal_id"], "user_id": task["user_id"]})
+        self.validate_meal_input(meal, request)
+        if meal and context.get("meal_signature") and self.meal_signature(meal) != context["meal_signature"]:
+            raise AppError("MEAL_VERSION_CHANGED", "餐次内容已改变，识别已停止", 409)
+        for image_id in request["photo_ids"]:
+            if not repo.one("media", {"id": image_id, "user_id": task["user_id"], "meal_id": request["meal_id"], "status": "ready"}):
+                raise AppError("PHOTO_CHANGED", "识别照片已改变或删除", 409)
+
+    @staticmethod
+    def meal_signature(meal):
+        if not meal:
+            return None
+        payload = json.loads(meal["payload"])
+        for field in ("ai_task_id", "ai_result"):
+            payload.pop(field, None)
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    @staticmethod
+    def validate_meal_input(meal, request):
+        if not meal:
+            return
+        payload = json.loads(meal["payload"])
+        if meal["deleted_at"] or meal["kind"] != "meal" or set(payload.get("photo_ids", [])) != set(request["photo_ids"]) or payload.get("note", "") != request.get("note", ""):
+            raise AppError("MEAL_VERSION_CHANGED", "餐次或识别照片已改变，请重新确认", 409)
 
     async def process(self, task):
         request = json.loads(task["payload"])
-        if "_provider_snapshot" not in request:
+        if self.providers.cloud:
+            with self.db.read() as repo:
+                self.check_cloud_task(repo, task, request)
+            configuration = self.providers.configuration(task["user_id"])
+            configuration["model"] = request["_cloud_context"]["model"]
+        elif "_provider_snapshot" not in request:
             raise AppError("PROVIDER_CHANGED", "识别配置已更新，请重新提交任务", 409)
-        configuration = self.providers.unseal(request["_provider_snapshot"])
+        else:
+            configuration = self.providers.unseal(request["_provider_snapshot"])
         current = self.providers.configuration(task["user_id"])
         if current["version"] != configuration["version"] or current["base_url"] != configuration["base_url"]:
             raise AppError("PROVIDER_CHANGED", "AI 配置已变化，请重新提交任务", 409)
@@ -113,6 +197,10 @@ class AIService:
                 headers["Idempotency-Key"] = task["request_key"] + (":nutrition" if attempt else "")
                 if configuration["protocol"] == "generic":
                     body["request_id"] = headers["Idempotency-Key"]
+                if self.providers.cloud:
+                    with self.db.transaction() as repo:
+                        self.check_cloud_task(repo, task, request)
+                        self.entitlements.provider_started(repo, task["id"])
                 response = await client.post(url, headers=headers, json=body)
                 self.providers.check_response(response)
                 raw = response.json()

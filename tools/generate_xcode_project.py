@@ -96,6 +96,7 @@ def resources():
     }
     write_plist(ROOT / "BingJian" / "Info.plist", {
         **base, "CFBundleDisplayName": "并肩", "LSRequiresIPhoneOS": True,
+        "BingJianCloudServerURL": "$(BINGJIAN_CLOUD_SERVER_URL)",
         "NSCameraUsageDescription": "拍摄餐食照片以辅助记录，也可拍摄挑战邀请码。",
         "NSPhotoLibraryUsageDescription": "选择你指定的餐食照片，用于个人饮食记录。",
         "NSLocalNetworkUsageDescription": "连接你配置的私有服务器，进行记录同步和伙伴共享。",

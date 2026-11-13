@@ -168,6 +168,8 @@ class MaintenanceService:
             self.last_backup_cleanup = time.monotonic()
         with self.db.transaction() as repo:
             repo.delete("snapshots", {"expires_at__lt": now})
+            repo.delete("auth_rate_limits", {"expires_at__lt": now})
+            repo.delete("email_challenges", {"expires_at__lt": (utc_now() - timedelta(days=1)).isoformat()})
             exports = repo.find("tasks", {"kind": "export", "status": "completed"})
             for task in exports:
                 result = json.loads(task["result"] or "{}")

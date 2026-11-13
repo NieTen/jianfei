@@ -195,41 +195,86 @@ struct WeightHistoryView: View {
     @EnvironmentObject private var model: AppModel
     @State private var editing: AppRecord?
     @State private var showHidden = false
+    @State private var page = LocalPage<LocalWeightRow>()
+    @State private var loading = false
+    @State private var requestToken = UUID()
+    @State private var loadedContext: UUID?
+    @State private var message: String?
+
     var body: some View {
         AppList {
             FormIntro(title: "每一次记录都有意义", subtitle: "按日期查看体重，点击记录可以修改。", symbol: "scalemass", color: Palette.purple)
             Toggle("显示本地隐藏记录", isOn: $showHidden)
-            ForEach(model.recordIndex.byKind["weight"] ?? []) { record in
-                if let weight = record.decode(WeightEntry.self), showHidden || (!weight.hidden && !weight.sourceDeleted) {
-                    Button { editing = record } label: {
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack {
-                                Text(model.weightUnit.formatted(kilograms: weight.correctedWeightKg ?? weight.weightKg)).font(.headline)
-                                Spacer()
-                                Text(record.businessDate + " " + (TimeFormat.parse(weight.measuredAt)?.formatted(date: .omitted, time: .shortened) ?? "")).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Text(weight.sourceName ?? (weight.source == "manual" ? "手动记录" : "健康数据"))
-                                .font(.caption).foregroundStyle(.secondary)
-                            if weight.hidden || weight.sourceDeleted { Text(weight.sourceDeleted ? "来源已删除" : "本地已隐藏").font(.caption).foregroundStyle(.secondary) }
+            if let message { Text(message).foregroundStyle(.red) }
+            if page.items.isEmpty, !loading { Text("本页没有体重记录").foregroundStyle(.secondary) }
+            ForEach(page.items) { row in
+                let record = row.record
+                let weight = row.weight
+                Button { editing = record } label: {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text(model.weightUnit.formatted(kilograms: weight.correctedWeightKg ?? weight.weightKg)).font(.headline)
+                            Spacer()
+                            Text(record.businessDate + " " + (TimeFormat.parse(weight.measuredAt)?.formatted(date: .omitted, time: .shortened) ?? "")).font(.caption).foregroundStyle(.secondary)
                         }
+                        Text(weight.sourceName ?? (weight.source == "manual" ? "手动记录" : "健康数据"))
+                            .font(.caption).foregroundStyle(.secondary)
+                        if weight.hidden || weight.sourceDeleted { Text(weight.sourceDeleted ? "来源已删除" : "本地已隐藏").font(.caption).foregroundStyle(.secondary) }
                     }
-                    .swipeActions {
-                        if weight.hidden {
-                            Button("恢复") {
-                                model.perform {
-                                    var value = record
-                                    value.payload["hidden"] = .bool(false)
-                                    try await model.saveRecord(value)
-                                }
-                            }
-                        } else {
-                            Button("删除", role: .destructive) { model.perform { try await model.deleteRecord(record) } }
-                        }
+                }
+                .disabled(loadedContext != model.localDataContext)
+                .swipeActions {
+                    if weight.hidden {
+                        Button("恢复") { Task { await change(record, restore: true) } }
+                    } else {
+                        Button("删除", role: .destructive) { Task { await change(record, restore: false) } }
                     }
                 }
             }
+            LocalPageControls(previous: page.previousCursor != nil, next: page.nextCursor != nil, loading: loading,
+                onPrevious: { Task { await load(before: page.previousCursor) } },
+                onNext: { Task { await load(after: page.nextCursor) } })
         }
         .navigationTitle("体重记录")
+        .task(id: model.localDataContext) {
+            page = LocalPage(); editing = nil; loadedContext = nil
+            await load()
+        }
+        .onChange(of: showHidden) { _, _ in Task { await load() } }
+        .onChange(of: model.dataRevision) { _, _ in Task { await load() } }
+        .refreshable { await load() }
+        .onDisappear { requestToken = UUID() }
         .sheet(item: $editing) { record in NavigationStack { WeightEditorView(existing: record) } }
+    }
+
+    private func load(after: LocalPageCursor? = nil, before: LocalPageCursor? = nil) async {
+        let token = UUID(), context = model.localDataContext
+        requestToken = token
+        loading = true
+        defer { if requestToken == token { loading = false } }
+        do {
+            let store = try model.requireStore()
+            let result = try await store.weightHistoryPage(showHidden: showHidden, after: after, before: before)
+            try Task.checkCancellation()
+            guard requestToken == token, context == model.localDataContext, store === (try model.requireStore()) else { return }
+            page = result
+            loadedContext = context
+            message = nil
+        } catch is CancellationError {
+        } catch { if requestToken == token, context == model.localDataContext { message = error.localizedDescription } }
+    }
+
+    private func change(_ record: AppRecord, restore: Bool) async {
+        let context = model.localDataContext
+        guard loadedContext == context else { return }
+        do {
+            if restore {
+                var value = record
+                value.payload["hidden"] = .bool(false)
+                try await model.saveRecord(value)
+            } else { try await model.deleteRecord(record) }
+            guard context == model.localDataContext else { return }
+            await load()
+        } catch { if context == model.localDataContext { message = error.localizedDescription } }
     }
 }

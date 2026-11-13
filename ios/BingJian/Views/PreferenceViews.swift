@@ -5,53 +5,105 @@ struct AISettingsView: View {
     @State private var name = ""
     @State private var weightMultiplier: Double = 1
     @State private var calorieMultiplier: Double = 1
+    @State private var saving = false
+    @State private var error: String?
     var body: some View {
         AppForm {
-            FormIntro(title: "更了解你的每一餐", subtitle: "选择识别方式，也可以保存自己的份量与热量偏好。", symbol: "sparkles", color: Palette.purple)
-            Section("识别方式") {
-                NavigationLink("设置 AI 接口、密钥与模型") { AIConnectionEditorView() }
-                Picker("默认模式", selection: $model.aiMode) {
-                    Text("本机 Vision 分类").tag("device")
-                    Text("Responses API 服务").tag("server")
-                }
-                let ai = model.capabilities["ai"]?.object ?? [:]
-                LabeledContent("服务地址", value: model.aiConfiguration.configured ? model.aiConfiguration.baseUrl : ai.text("host", fallback: "尚未配置"))
-                LabeledContent("模型", value: model.aiConfiguration.model.isEmpty ? ai.text("model", fallback: "未指定") : model.aiConfiguration.model)
-                Text(model.aiConfiguration.external ? "该服务会将照片发送到外部处理方" : "使用配置的内网 AI 服务")
-                    .font(.caption).foregroundStyle(.secondary)
-                Toggle("允许已披露的外部 AI 处理照片", isOn: $model.externalAIConsent)
-                Text("提供方变更后应重新核对授权。照片上传默认去除 EXIF 定位及无关元数据。").font(.caption).foregroundStyle(.secondary)
-            }
-            Section("个人估算偏好") {
-                FormField(title: "食物名称") { TextField("匹配同名候选", text: $name) }
-                VStack(alignment: .leading) {
-                    Text("份量倍率 \(weightMultiplier.concise)")
-                    Slider(value: $weightMultiplier, in: 0.25...3, step: 0.05)
-                }
-                VStack(alignment: .leading) {
-                    Text("热量倍率 \(calorieMultiplier.concise)")
-                    Slider(value: $calorieMultiplier, in: 0.25...3, step: 0.05)
-                }
-                Button("保存个人偏好") {
-                    model.perform {
-                        try await model.saveFoodPreference(FoodPreference(foodName: name.trimmingCharacters(in: .whitespaces),
-                            weightMultiplier: weightMultiplier, calorieMultiplier: calorieMultiplier))
-                        name = ""
-                    }
-                }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                Text("偏好用于以后同名食物的候选估算，最终仍由你确认。").font(.caption).foregroundStyle(.secondary)
-            }
-            Section("已保存偏好") {
-                ForEach(model.records.filter { $0.kind == "food_preference" && $0.deletedAt == nil }) { record in
-                    HStack {
-                        Text(record.payload.text("food_name"))
-                        Spacer()
-                        Text("份量 ×\(record.payload.number("weight_multiplier")?.concise ?? "1")")
+            if model.canUseAI {
+                FormIntro(title: "更了解你的每一餐", subtitle: "核对照片处理授权，也可以保存自己的份量与热量偏好。", symbol: "sparkles", color: Palette.purple)
+                if model.isCloudMode {
+                    Section("云端识别") {
+                        NavigationLink("云端模型与照片处理授权") { AIConnectionEditorView() }
+                        LabeledContent("处理方", value: model.cloudAI.text("provider_name", fallback: "尚未配置"))
+                        LabeledContent("当前模型", value: model.cloudAI.text("model_id", fallback: "未选择"))
+                        Text("餐食识别由云端执行，接口与密钥由云端统一管理。")
                             .font(.caption).foregroundStyle(.secondary)
-                    }.swipeActions { Button("删除", role: .destructive) { model.perform { try await model.deleteRecord(record) } } }
+                    }
+                } else {
+                    Section("识别方式") {
+                        NavigationLink("设置 AI 接口、密钥与模型") { AIConnectionEditorView() }
+                        Picker("默认模式", selection: $model.aiMode) {
+                            Text("本机 Vision 分类").tag("device")
+                            Text("Responses API 服务").tag("server")
+                        }
+                        let ai = model.capabilities["ai"]?.object ?? [:]
+                        LabeledContent("服务地址", value: model.aiConfiguration.configured ? model.aiConfiguration.baseUrl : ai.text("host", fallback: "尚未配置"))
+                        LabeledContent("模型", value: model.aiConfiguration.model.isEmpty ? ai.text("model", fallback: "未指定") : model.aiConfiguration.model)
+                        Text(model.aiConfiguration.external ? "该服务会将照片发送到外部处理方" : "使用配置的内网 AI 服务")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Toggle("允许已披露的外部 AI 处理照片", isOn: $model.externalAIConsent)
+                        Text("提供方变更后应重新核对授权。照片上传默认去除 EXIF 定位及无关元数据。").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Section("个人估算偏好") {
+                    FormField(title: "食物名称") { TextField("匹配同名候选", text: $name) }
+                    VStack(alignment: .leading) {
+                        Text("份量倍率 \(weightMultiplier.concise)")
+                        Slider(value: $weightMultiplier, in: 0.25...3, step: 0.05)
+                    }
+                    VStack(alignment: .leading) {
+                        Text("热量倍率 \(calorieMultiplier.concise)")
+                        Slider(value: $calorieMultiplier, in: 0.25...3, step: 0.05)
+                    }
+                    Button("保存个人偏好", action: savePreference).disabled(saving || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Text("偏好用于以后同名食物的候选估算，最终仍由你确认。").font(.caption).foregroundStyle(.secondary)
+                }
+                Section("已保存偏好") {
+                    ForEach(model.recordIndex.byKind["food_preference"] ?? []) { record in
+                        HStack {
+                            Text(record.payload.text("food_name"))
+                            Spacer()
+                            Text("份量 ×\(record.payload.number("weight_multiplier")?.concise ?? "1")")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }.swipeActions {
+                            Button("删除", role: .destructive) {
+                                let context = model.localDataContext
+                                Task {
+                                    guard context == model.localDataContext, model.canUseAI else { return }
+                                    do { try await model.deleteRecord(record) }
+                                    catch { if context == model.localDataContext { self.error = error.localizedDescription } }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Section("当前账号未开放 AI") {
+                    Text(model.aiAccessMessage)
+                    Text("手动记录和已保存的饮食明细仍可使用。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    NavigationLink("查看云端账号状态") { CloudAccountView() }
                 }
             }
         }.navigationTitle("AI 与估算偏好")
+            .task { if model.isCloudMode { await model.refreshCloudAccount() } }
+            .onChange(of: model.localDataContext) { _, _ in
+                name = ""
+                weightMultiplier = 1
+                calorieMultiplier = 1
+                saving = false
+                error = nil
+            }
+            .alert("偏好未保存", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+                Button("知道了", role: .cancel) {}
+            } message: { Text(error ?? "") }
+    }
+
+    private func savePreference() {
+        guard !saving, model.canUseAI else { return }
+        let context = model.localDataContext
+        let value = FoodPreference(foodName: name.trimmingCharacters(in: .whitespaces),
+                                   weightMultiplier: weightMultiplier, calorieMultiplier: calorieMultiplier)
+        saving = true
+        Task {
+            defer { if context == model.localDataContext { saving = false } }
+            do {
+                guard context == model.localDataContext, model.canUseAI else { return }
+                try await model.saveFoodPreference(value)
+                guard context == model.localDataContext else { return }
+                name = ""
+            } catch { if context == model.localDataContext { self.error = error.localizedDescription } }
+        }
     }
 }
 

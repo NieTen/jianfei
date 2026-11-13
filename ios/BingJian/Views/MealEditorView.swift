@@ -20,7 +20,17 @@ struct MealEditorView: View {
     @State private var showSearch = false
     @State private var recognizing = false
     @State private var recognitionTask: Task<Void, Never>?
+    @State private var recognitionOperationID = UUID()
+    @State private var photoTask: Task<Void, Never>?
+    @State private var editingContext: UUID?
+    @State private var cameraContext: UUID?
     @State private var recognition: JSONObject = [:]
+    @State private var recognitionPolicySnapshot: JSONObject = [:]
+    @State private var recognitionRecordSnapshot: AppRecord?
+    @State private var hasUncommittedRecognition = false
+    @State private var persistingRecognition = false
+    @State private var itemsBeforeRecognition: [FoodItem]?
+    @State private var resultBeforeRecognition: JSONObject?
     @State private var showReview = false
     @State private var localError: String?
     @State private var saving = false
@@ -38,9 +48,27 @@ struct MealEditorView: View {
         _calories = State(initialValue: MealInput.manualCalories(in: value))
     }
 
-    private var busy: Bool { saving || recognizing || loadingPhotos }
+    private var busy: Bool { saving || recognizing || loadingPhotos || persistingRecognition }
+    private var cloudConsentValid: Bool {
+        guard let provider = model.cloudAI["provider_revision"], provider != .null else { return false }
+        return model.cloudConsent.flag("allowed") && model.cloudConsent["provider_revision"] == provider
+    }
+    private var recognitionAllowed: Bool {
+        model.canUseAI && (model.isCloudMode ? cloudConsentValid : !externalConsentNeeded || model.externalAIConsent)
+    }
+    private var recognitionPolicy: JSONObject {
+        if model.isCloudMode {
+            return ["mode": .string("cloud"), "model": model.cloudAI["model_id"] ?? .null,
+                    "provider": model.cloudAI["provider_revision"] ?? .null,
+                    "consent": model.cloudConsent["revision"] ?? .null]
+        }
+        return ["mode": .string(model.aiMode), "execution": .string(model.aiConfiguration.execution),
+                "provider": .string(model.aiConfiguration.baseUrl), "model": .string(model.aiConfiguration.model),
+                "consent": .bool(model.externalAIConsent)]
+    }
     private var externalConsentNeeded: Bool {
-        model.aiMode == "server" && (model.aiConfiguration.external || (model.capabilities["ai"]?.object ?? [:]).flag("external"))
+        if model.isCloudMode { return model.cloudAI.flag("external") }
+        return model.aiMode == "server" && (model.aiConfiguration.external || (model.capabilities["ai"]?.object ?? [:]).flag("external"))
     }
 
     var body: some View {
@@ -50,7 +78,7 @@ struct MealEditorView: View {
                 Text(date.formatted(date: .abbreviated, time: .omitted))
                     .font(.caption).foregroundStyle(.secondary)
                 Picker("记录方式", selection: $inputMode) {
-                    Text("拍照识别").tag("photo")
+                    Text(model.canUseAI ? "拍照识别" : "食物与照片").tag("photo")
                     Text("手动热量").tag("manual")
                 }.pickerStyle(.segmented).disabled(busy)
             }
@@ -67,13 +95,17 @@ struct MealEditorView: View {
                     Text("只填本餐总热量即可。没有填写的蛋白质、碳水和脂肪保留为空。")
                 }
                 if !meal.items.isEmpty && MealInput.manualCalories(in: meal) == nil {
-                    Text("保存手动热量后，将用本餐总热量替换原食物明细；切回拍照识别可继续编辑明细。")
+                    Text("保存手动热量后，将用本餐总热量替换原食物明细；切回食物明细模式可继续编辑。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             } else {
                 photoSection
+                Section("手动记录") {
+                    Button("手动添加食物明细", systemImage: "plus.circle") { editingFood = FoodItem(name: "") }
+                    Button("营养库与常用食物", systemImage: "magnifyingglass") { showSearch = true }
+                }.disabled(busy)
                 if !meal.items.isEmpty {
-                    Section("识别结果 · 可点选修改") {
+                    Section("食物明细 · 可点选修改") {
                         ForEach(meal.items) { item in
                             Button { editingFood = item } label: {
                                 HStack {
@@ -90,8 +122,8 @@ struct MealEditorView: View {
                                 }
                             }.disabled(busy)
                             .contextMenu {
-                                Button("收藏食物", systemImage: "star") { model.perform { try await model.favorite(item) } }
-                                Button("移除食物", systemImage: "trash", role: .destructive) { meal.items.removeAll { $0.id == item.id } }
+                                Button("收藏食物", systemImage: "star") { favorite(item) }
+                                Button("移除食物", systemImage: "trash", role: .destructive) { removeManualFood(item.id) }
                             }
                         }
                         MealNutritionSummary(items: meal.items)
@@ -102,43 +134,41 @@ struct MealEditorView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                if recognizing {
+                if recognizing && model.canUseAI {
                     HStack { ProgressView(); Text("正在识别并估算重量、热量和营养…") }
                     Button("停止等待") { recognitionTask?.cancel() }
-                } else if !meal.photoIds.isEmpty {
+                } else if model.canUseAI && !meal.photoIds.isEmpty {
                     Button(meal.items.isEmpty ? "重试识别" : "重新估算重量与营养", systemImage: "arrow.clockwise") { startRecognition() }
-                        .disabled(busy)
+                        .disabled(busy || !recognitionAllowed)
                 }
             }
             Section {
                 DisclosureGroup("更多选项") {
                     TextField("备注，例如两人分食、少油", text: $meal.note, axis: .vertical)
                     Toggle("照片随个人数据同步", isOn: $meal.syncPhotos)
-                    Text("关闭后照片留在本机，远程识别会另行发送选中的照片。")
+                    Text(model.canUseAI ? "关闭后照片留在本机，远程识别会另行发送选中的照片。" : "关闭后照片只保存在本机。")
                         .font(.caption).foregroundStyle(.secondary)
                     if inputMode == "photo" {
-                        Button("手动添加食物明细", systemImage: "plus.circle") { editingFood = FoodItem(name: "") }
-                        Button("营养库与常用食物", systemImage: "magnifyingglass") { showSearch = true }
                         HStack {
                             ForEach(MealTypes.all.filter { !MealInput.primaryTypes.contains($0) }, id: \.self) { type in
                                 Button(MealTypes.name(type)) { meal.mealType = type }.buttonStyle(.borderless)
                             }
                         }
-                        if !recognition.isEmpty { Button("查看候选明细") { showReview = true } }
-                        Picker("识别方式", selection: $model.aiMode) {
-                            Text("本机识别").tag("device")
-                            Text("已配置的 AI").tag("server")
-                        }
-                        if let taskId = meal.aiTaskId {
-                            Button("查看上次识别结果") {
-                                Task { do { try await presentTask(taskId) } catch { localError = error.localizedDescription } }
+                        if model.canUseAI {
+                            if !recognition.isEmpty { Button("查看候选明细") { showReview = true }.disabled(!recognitionAllowed) }
+                            if !model.isCloudMode {
+                                Picker("识别方式", selection: $model.aiMode) {
+                                    Text("本机识别").tag("device")
+                                    Text("已配置的 AI").tag("server")
+                                }
                             }
-                            Button("取消远程任务", role: .destructive) {
-                                model.perform { _ = try await model.api.send("ai/tasks/\(taskId)/cancel", method: "POST", body: [:]) }
+                            if let taskId = meal.aiTaskId {
+                                Button("查看上次识别结果") { loadPreviousTask(taskId) }.disabled(!recognitionAllowed)
+                                Button("取消远程任务", role: .destructive) { cancelRemoteTask(taskId) }
                             }
                         }
                     }
-                    Button("保存草稿") { Task { await commit(confirmed: false) } }
+                    Button("保存草稿") { beginCommit(confirmed: false) }
                 }.disabled(busy)
             }
         }
@@ -146,71 +176,128 @@ struct MealEditorView: View {
         .navigationBarTitleDisplayMode(.inline)
         .scrollDismissesKeyboard(.interactively)
         .task {
+            if editingContext == nil { editingContext = model.localDataContext }
             guard !initializedDate else { return }
             initializedDate = true
             if existing == nil {
                 date = model.entryDate
                 meal.mealType = initialMealType ?? MealInput.suggestedType(at: Date(), timezone: model.profile.timezone)
             }
+            if model.isCloudMode { await model.refreshCloudAccount() }
         }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button(saving ? "保存中" : "保存") { Task { await commit(confirmed: true) } }.disabled(busy)
+                Button(saving ? "保存中" : "保存") { beginCommit(confirmed: true) }.disabled(busy)
             }
         }
         .sheet(isPresented: $showCamera, onDismiss: {
-            guard let data = cameraData else { return }
+            guard let data = cameraData, let context = cameraContext else { return }
             cameraData = nil
-            Task { await importPhotos([data]) }
-        }) { CameraPicker { cameraData = $0 } }
+            cameraContext = nil
+            guard context == model.localDataContext, context == editingContext else { return }
+            photoTask = Task { await importPhotos([data], context: context) }
+        }) {
+            CameraPicker {
+                guard cameraContext == model.localDataContext, editingContext == model.localDataContext else { return }
+                cameraData = $0
+            }
+        }
         .photosPicker(isPresented: $showPhotos, selection: $pickedPhotos,
                       maxSelectionCount: max(1, 6 - meal.photoIds.count), matching: .images)
         .sheet(item: $editingFood) { food in
             NavigationStack {
                 FoodEditorView(food: food) { changed in
+                    guard editingContext == model.localDataContext else { return }
                     var edited = changed
                     if changed != food && edited.source == "ai_estimate" { edited.source = "manual" }
-                    if let index = meal.items.firstIndex(where: { $0.id == edited.id }) { meal.items[index] = edited }
-                    else { meal.items.append(edited) }
+                    updateManualFood(edited, changed: changed != food)
                 }
             }
         }
         .sheet(isPresented: $showSearch) {
             NavigationStack {
                 FoodSearchView { item in
+                    guard editingContext == model.localDataContext else { return }
                     var copied = item
                     copied.id = UUID().uuidString.lowercased()
                     meal.items.append(copied)
+                    if itemsBeforeRecognition != nil { itemsBeforeRecognition?.append(copied) }
                 }
             }
         }
         .sheet(isPresented: $showReview) {
             NavigationStack {
-                RecognitionReviewView(result: recognition) { items, replace in
+                RecognitionReviewView(result: recognition, context: editingContext ?? model.localDataContext) { items, replace in
+                    guard let context = editingContext else { throw CancellationError() }
+                    try await validateMealRevision(context)
+                    beginRecognitionEdits()
                     if replace { meal.items = items } else { meal.items.append(contentsOf: items) }
                     meal.aiResult = recognition
+                    hasUncommittedRecognition = true
                 }
             }
         }
         .onChange(of: pickedPhotos) { _, values in
             guard !values.isEmpty else { return }
             pickedPhotos = []
-            Task {
-                loadingPhotos = true
+            guard let context = editingContext, context == model.localDataContext else { return }
+            loadingPhotos = true
+            photoTask = Task {
+                defer { if context == model.localDataContext { loadingPhotos = false } }
                 var data: [Data] = []
                 for item in values {
                     do {
+                        try validateContext(context)
+                        try Task.checkCancellation()
                         guard let value = try await item.loadTransferable(type: Data.self) else {
                             throw APIError(code: "PHOTO_LOAD", message: "这张照片暂时无法读取，请确认照片已从 iCloud 下载后重试")
                         }
+                        try validateContext(context)
+                        try Task.checkCancellation()
                         data.append(value)
-                    } catch { localError = "照片读取失败：\(error.localizedDescription)" }
+                    } catch is CancellationError { return }
+                    catch {
+                        guard context == model.localDataContext else { return }
+                        localError = "照片读取失败：\(error.localizedDescription)"
+                    }
                 }
-                await importPhotos(data)
+                await importPhotos(data, context: context)
             }
         }
-        .onDisappear { recognitionTask?.cancel() }
+        .onChange(of: model.localDataContext) { _, _ in
+            recognitionTask?.cancel()
+            recognitionOperationID = UUID()
+            photoTask?.cancel()
+            recognition = [:]
+            cameraData = nil
+            cameraContext = nil
+            showCamera = false
+            showPhotos = false
+            showReview = false
+            showSearch = false
+            editingFood = nil
+            dismiss()
+        }
+        .onChange(of: recognitionAllowed) { _, allowed in
+            if !allowed {
+                recognitionTask?.cancel()
+                recognitionOperationID = UUID()
+                recognizing = false
+                recognition = [:]
+                showReview = false
+                discardUncommittedRecognition()
+            }
+        }
+        .onChange(of: recognitionPolicy) { _, _ in
+            recognitionTask?.cancel()
+            recognitionOperationID = UUID()
+            recognizing = false
+            recognition = [:]
+            showReview = false
+            discardUncommittedRecognition()
+        }
+        .onDisappear { recognitionTask?.cancel(); photoTask?.cancel() }
         .alert("请检查记录", isPresented: Binding(get: { localError != nil }, set: { if !$0 { localError = nil } })) {
             Button("知道了", role: .cancel) {}
         } message: { Text(localError ?? "") }
@@ -219,7 +306,7 @@ struct MealEditorView: View {
     private var photoSection: some View {
         Section {
             HStack(spacing: 12) {
-                Button { showCamera = true } label: {
+                Button { cameraContext = model.localDataContext; showCamera = true } label: {
                     Label("拍照", systemImage: "camera").frame(maxWidth: .infinity, minHeight: 48)
                 }.buttonStyle(.bordered).accessibilityIdentifier("meal.camera")
                 Button { showPhotos = true } label: {
@@ -240,15 +327,26 @@ struct MealEditorView: View {
                     }
                 }
             }
-            if externalConsentNeeded && !model.externalAIConsent {
-                Toggle("允许将所选餐食照片发送到配置的 AI", isOn: $model.externalAIConsent)
-            }
-            if model.aiMode == "device" {
-                NavigationLink("配置 AI，自动估算重量与热量") { AIConnectionEditorView() }
-                Text("本机识别只提供食物类别，配置 AI 后可估算重量、热量和营养。")
-                    .font(.caption).foregroundStyle(.secondary)
+            if model.canUseAI {
+                if model.isCloudMode {
+                    NavigationLink("云端模型与照片处理授权") { AIConnectionEditorView() }
+                    Text(cloudConsentValid ? "选择照片后自动使用云端模型估算食物与营养。" : "请先核对云端处理方并开启照片处理授权。照片仍可留存并手动记录。")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    if externalConsentNeeded && !model.externalAIConsent {
+                        Toggle("允许将所选餐食照片发送到配置的 AI", isOn: $model.externalAIConsent)
+                    }
+                    if model.aiMode == "device" {
+                        NavigationLink("配置 AI，自动估算重量与热量") { AIConnectionEditorView() }
+                        Text("本机识别只提供食物类别，配置 AI 后可估算重量、热量和营养。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("选择照片后自动识别食物、预计重量、热量与营养。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             } else {
-                Text("选择照片后自动识别食物、预计重量、热量与营养。")
+                Text("照片可留作记录，食物明细和热量可手动填写。")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -270,47 +368,73 @@ struct MealEditorView: View {
             startMinutes: model.profile.dayStartMinutes), value: value, id: mealId)
     }
 
-    private func importPhotos(_ data: [Data]) async {
+    private func importPhotos(_ data: [Data], context: UUID) async {
+        guard context == model.localDataContext, context == editingContext else { return }
         loadingPhotos = true
         var added = false
         for image in data where meal.photoIds.count < 6 {
             do {
+                try validateContext(context)
+                try Task.checkCancellation()
                 let id = try await model.savePhoto(image, mealId: mealId)
+                try validateContext(context)
+                try Task.checkCancellation()
                 meal.photoIds.append(id)
                 added = true
-            } catch { localError = error.localizedDescription }
+            } catch is CancellationError {
+                if context == model.localDataContext { loadingPhotos = false }
+                return
+            } catch { if context == model.localDataContext { localError = error.localizedDescription } }
         }
+        guard context == model.localDataContext else { return }
         loadingPhotos = false
-        if added { startRecognition() }
+        if added && recognitionAllowed { startRecognition() }
     }
 
-    private func commit(confirmed: Bool) async {
-        guard !busy else { return }
+    private func beginCommit(confirmed: Bool) {
+        guard !busy, let context = editingContext, context == model.localDataContext else { return }
         saving = true
-        defer { saving = false }
+        Task { await commit(confirmed: confirmed, context: context) }
+    }
+
+    private func commit(confirmed: Bool, context: UUID) async {
+        defer { if context == model.localDataContext { saving = false } }
         do {
+            try validateContext(context)
+            if hasUncommittedRecognition { try await validateMealRevision(context) }
             let value = try record(confirmed: confirmed)
-            try await model.saveRecord(value)
+            try await model.saveRecord(value, expectedPayload: hasUncommittedRecognition ? recognitionRecordSnapshot?.payload : nil)
+            try validateContext(context)
             dismiss()
-        } catch { localError = error.localizedDescription }
+        } catch is CancellationError { }
+        catch { if context == model.localDataContext { localError = error.localizedDescription } }
     }
 
     private func startRecognition() {
-        guard !busy, !meal.photoIds.isEmpty else { return }
+        guard !busy, !meal.photoIds.isEmpty, recognitionAllowed,
+              let context = editingContext, context == model.localDataContext else { return }
+        recognitionPolicySnapshot = recognitionPolicy
+        let operation = UUID()
+        recognitionOperationID = operation
         recognizing = true
-        recognitionTask = Task { await recognize() }
+        recognitionTask = Task { await recognize(context: context, operation: operation) }
     }
 
-    private func recognize() async {
-        defer { recognizing = false }
+    private func recognize(context: UUID, operation: UUID) async {
+        defer { if context == model.localDataContext, recognitionOperationID == operation { recognizing = false } }
         do {
+            try validateRecognitionAccess(context)
             try await model.saveRecord(record(confirmed: false))
+            try validateRecognitionAccess(context)
             let current = try await model.requireStore().record(mealId) ?? record(confirmed: false)
+            try validateRecognitionAccess(context)
+            recognitionRecordSnapshot = current
             let result = try await model.recognize(record: current)
+            try validateRecognitionAccess(context)
             try Task.checkCancellation()
             if result["items"] != nil {
-                try applyRecognition(result)
-                try await model.saveRecord(record(confirmed: false))
+                try await applyRecognition(result, context: context)
+                try await persistRecognitionDraft(context)
             }
             else if result.text("status") == "waiting" {
                 localError = "照片已保存，连接恢复后会继续提交识别，也可改为手动填写热量。"
@@ -321,11 +445,13 @@ struct MealEditorView: View {
                 // 首次估算与一次自动补全各需等待，避免补全期间过早结束轮询。
                 for _ in 0..<130 {
                     try await Task.sleep(for: .seconds(3))
+                    try validateRecognitionAccess(context)
                     let task = try await model.pollRecognition(taskId)
+                    try validateRecognitionAccess(context)
                     try Task.checkCancellation()
                     if task.text("status") == "completed" {
-                        try applyRecognition(task["result"]?.object ?? [:])
-                        try await model.saveRecord(record(confirmed: false))
+                        try await applyRecognition(task["result"]?.object ?? [:], context: context)
+                        try await persistRecognitionDraft(context)
                         return
                     }
                     if ["failed", "cancelled", "unknown", "expired"].contains(task.text("status")) {
@@ -335,27 +461,169 @@ struct MealEditorView: View {
                 localError = "识别仍在处理，可稍后在更多选项中查看上次结果"
             }
         } catch is CancellationError { }
-        catch { localError = error.localizedDescription }
+        catch { if context == model.localDataContext { localError = error.localizedDescription } }
     }
 
-    private func applyRecognition(_ result: JSONObject) throws {
-        if model.records.first(where: { $0.id == mealId })?.deletedAt != nil {
-            throw APIError(code: "ENTITY_DELETED", message: "餐次已经删除，请重新记录")
-        }
+    private func applyRecognition(_ result: JSONObject, context: UUID) async throws {
+        try await validateMealRevision(context)
         let items = try result.objects("items").map { try Codec.decode(FoodItem.self, from: $0) }
         guard !items.isEmpty else { throw APIError(code: "NO_FOOD", message: "没有识别到可靠的食物，请换一张照片或手动填写热量") }
         for item in items { try RecordValidator.food(item) }
+        beginRecognitionEdits()
         recognition = result
         meal.items = MealInput.applyingRecognition(items, to: meal.items)
         meal.aiResult = result
+        hasUncommittedRecognition = true
     }
 
-    private func presentTask(_ taskId: String) async throws {
+    private func presentTask(_ taskId: String, context: UUID) async throws {
+        try validateRecognitionAccess(context)
+        recognitionRecordSnapshot = try await model.requireStore().record(mealId)
+        try validateRecognitionAccess(context)
         let task = try await model.pollRecognition(taskId)
+        try validateRecognitionAccess(context)
         guard task.text("status") == "completed", let result = task["result"]?.object else {
             throw APIError(code: "AI_TASK", message: task.text("error", fallback: "任务尚未完成，请稍后再看"))
         }
-        try applyRecognition(result)
+        guard let source = task["request_context"]?.object, let current = recognitionRecordSnapshot,
+              source.text("meal_id") == mealId,
+              Set(source.strings("photo_ids")) == Set(meal.photoIds),
+              Set(source.strings("photo_ids")) == Set(current.payload.strings("photo_ids")),
+              source.text("note") == meal.note, source.text("note") == current.payload.text("note"),
+              result.number("meal_version") == source.number("meal_version"),
+              source.flag("meal_unchanged") || source.number("meal_version") == Double(current.version) else {
+            throw APIError(code: "MEAL_VERSION_CHANGED", message: "无法确认上次结果仍对应当前餐次。现有食物已保留，请重新识别后再应用。")
+        }
+        try await applyRecognition(result, context: context)
+    }
+
+    private func persistRecognitionDraft(_ context: UUID) async throws {
+        try await validateMealRevision(context)
+        let value = try record(confirmed: false)
+        let store = try model.requireStore()
+        persistingRecognition = true
+        defer { if context == model.localDataContext { persistingRecognition = false } }
+        do {
+            try await model.saveRecord(value, expectedPayload: recognitionRecordSnapshot?.payload)
+            try validateContext(context)
+            finishRecognitionSave(value)
+        } catch {
+            guard context == model.localDataContext else { throw error }
+            // 撤权取消可能发生在数据库提交后、界面重载前；已经落库的结果属于历史记录。
+            let stored = try? await store.record(mealId)
+            guard context == model.localDataContext else { throw error }
+            if let stored, stored.deletedAt == nil, stored.payload == value.payload {
+                finishRecognitionSave(value)
+            } else {
+                persistingRecognition = false
+                if !recognitionAllowed || recognitionPolicySnapshot != recognitionPolicy {
+                    discardUncommittedRecognition()
+                }
+            }
+            throw error
+        }
+    }
+
+    private func finishRecognitionSave(_ value: AppRecord) {
+        recognitionRecordSnapshot = value
+        hasUncommittedRecognition = false
+        itemsBeforeRecognition = nil
+        resultBeforeRecognition = nil
+    }
+
+    /// 仅撤回本次尚未保存的 AI 变更；继续手动输入时同步更新基线，避免失权丢失手工修改。
+    private func beginRecognitionEdits() {
+        guard itemsBeforeRecognition == nil else { return }
+        itemsBeforeRecognition = meal.items
+        resultBeforeRecognition = meal.aiResult
+    }
+
+    private func updateManualFood(_ item: FoodItem, changed: Bool) {
+        if let index = meal.items.firstIndex(where: { $0.id == item.id }) { meal.items[index] = item }
+        else { meal.items.append(item) }
+        guard changed, var baseline = itemsBeforeRecognition else { return }
+        if let index = baseline.firstIndex(where: { $0.id == item.id }) { baseline[index] = item }
+        else { baseline.append(item) }
+        itemsBeforeRecognition = baseline
+    }
+
+    private func removeManualFood(_ id: String) {
+        meal.items.removeAll { $0.id == id }
+        itemsBeforeRecognition?.removeAll { $0.id == id }
+    }
+
+    private func discardUncommittedRecognition() {
+        guard !persistingRecognition, hasUncommittedRecognition, let baseline = itemsBeforeRecognition else { return }
+        meal.items = baseline
+        meal.aiResult = resultBeforeRecognition
+        hasUncommittedRecognition = false
+        itemsBeforeRecognition = nil
+        resultBeforeRecognition = nil
+    }
+
+    /// 服务端版本和任务标记可因同步变化；真正的餐次内容变化则必须重新核对。
+    private func validateMealRevision(_ context: UUID) async throws {
+        try validateRecognitionAccess(context)
+        guard let expected = recognitionRecordSnapshot,
+              let current = try await model.requireStore().record(mealId), current.deletedAt == nil else {
+            throw APIError(code: "ENTITY_DELETED", message: "餐次已经删除或不可用，请重新打开记录")
+        }
+        try validateRecognitionAccess(context)
+        var previousPayload = expected.payload, currentPayload = current.payload
+        for key in ["ai_task_id", "ai_result"] {
+            previousPayload.removeValue(forKey: key)
+            currentPayload.removeValue(forKey: key)
+        }
+        guard expected.kind == current.kind, expected.businessDate == current.businessDate,
+              previousPayload == currentPayload else {
+            throw APIError(code: "MEAL_VERSION_CHANGED", message: "餐次已在其他位置修改，请重新打开后再应用识别结果")
+        }
+    }
+
+    private func validateContext(_ context: UUID) throws {
+        try Task.checkCancellation()
+        guard context == model.localDataContext, context == editingContext else { throw CancellationError() }
+    }
+
+    private func validateRecognitionAccess(_ context: UUID) throws {
+        try validateContext(context)
+        guard model.canUseAI else { throw APIError(code: "AI_ACCESS_DENIED", message: model.aiAccessMessage) }
+        guard recognitionAllowed else { throw APIError(code: "AI_CONSENT", message: "请先核对照片处理授权") }
+        guard recognitionPolicySnapshot == recognitionPolicy else { throw CancellationError() }
+    }
+
+    private func loadPreviousTask(_ taskId: String) {
+        guard !busy, let context = editingContext, context == model.localDataContext, recognitionAllowed else { return }
+        recognitionPolicySnapshot = recognitionPolicy
+        let operation = UUID()
+        recognitionOperationID = operation
+        recognizing = true
+        recognitionTask = Task {
+            defer { if context == model.localDataContext, recognitionOperationID == operation { recognizing = false } }
+            do { try await presentTask(taskId, context: context) }
+            catch is CancellationError { }
+            catch { if context == model.localDataContext { localError = error.localizedDescription } }
+        }
+    }
+
+    private func cancelRemoteTask(_ taskId: String) {
+        guard !busy, let context = editingContext, context == model.localDataContext, model.canUseAI else { return }
+        Task {
+            do {
+                try validateContext(context)
+                _ = try await model.api.send("ai/tasks/\(taskId)/cancel", method: "POST", body: [:])
+            } catch is CancellationError { }
+            catch { if context == model.localDataContext { localError = error.localizedDescription } }
+        }
+    }
+
+    private func favorite(_ item: FoodItem) {
+        guard let context = editingContext, context == model.localDataContext else { return }
+        Task {
+            do { try validateContext(context); try await model.favorite(item) }
+            catch is CancellationError { }
+            catch { if context == model.localDataContext { localError = error.localizedDescription } }
+        }
     }
 }
 
@@ -404,20 +672,33 @@ struct MealNutritionSummary: View {
 }
 
 struct RecognitionReviewView: View {
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let result: JSONObject
-    let onApply: ([FoodItem], Bool) -> Void
+    let context: UUID
+    let onApply: ([FoodItem], Bool) async throws -> Void
     @State private var items: [FoodItem]
     @State private var editing: FoodItem?
+    @State private var applying = false
+    @State private var error: String?
 
-    init(result: JSONObject, onApply: @escaping ([FoodItem], Bool) -> Void) {
+    init(result: JSONObject, context: UUID, onApply: @escaping ([FoodItem], Bool) async throws -> Void) {
         self.result = result
+        self.context = context
         self.onApply = onApply
         _items = State(initialValue: result.objects("items").compactMap { try? Codec.decode(FoodItem.self, from: $0) })
     }
 
+    private var canApply: Bool {
+        guard context == model.localDataContext, model.canUseAI else { return false }
+        if !model.isCloudMode { return true }
+        guard let provider = model.cloudAI["provider_revision"], provider != .null else { return false }
+        return model.cloudConsent.flag("allowed") && model.cloudConsent["provider_revision"] == provider
+    }
+
     var body: some View {
         AppList {
+            if canApply {
             FormIntro(title: "核对这一餐", subtitle: "检查识别结果与预计份量，再应用到记录。", symbol: "checkmark.seal", color: Palette.peach)
             Section {
                 Text(result.text("uncertainty_note", fallback: "请核对食物、份量和营养")).font(.subheadline)
@@ -439,19 +720,43 @@ struct RecognitionReviewView: View {
                 if items.isEmpty { Text("没有可靠候选，可返回手动添加食物").foregroundStyle(.secondary) }
             }
             Section {
-                Button("将候选合并到餐次") { onApply(items, false); dismiss() }.disabled(items.isEmpty)
-                Button("用候选替换餐次食物") { onApply(items, true); dismiss() }.disabled(items.isEmpty)
+                Button("将候选合并到餐次") { apply(replacing: false) }.disabled(items.isEmpty || applying)
+                Button("用候选替换餐次食物") { apply(replacing: true) }.disabled(items.isEmpty || applying)
                 Text("应用候选后仍需在餐次页面确认，才会计入摄入。").font(.caption).foregroundStyle(.secondary)
+            }
+            } else {
+                Section { Text("账号或照片处理授权已变化，请关闭此页并重新确认。") }
             }
         }
         .navigationTitle("确认识别候选")
         .toolbar { Button("关闭") { dismiss() } }
+        .onChange(of: canApply) { _, allowed in if !allowed { dismiss() } }
+        .alert("候选未应用", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+            Button("知道了", role: .cancel) {}
+        } message: { Text(error ?? "") }
         .sheet(item: $editing) { food in
             NavigationStack {
                 FoodEditorView(food: food) { changed in
+                    guard canApply else { return }
                     if let index = items.firstIndex(where: { $0.id == changed.id }) { items[index] = changed }
                 }
             }
+        }
+    }
+
+    private func apply(replacing: Bool) {
+        guard canApply, !applying else { return }
+        applying = true
+        let selected = items
+        Task {
+            defer { applying = false }
+            do {
+                guard canApply else { return }
+                try await onApply(selected, replacing)
+                guard canApply else { return }
+                dismiss()
+            } catch is CancellationError { }
+            catch { if context == model.localDataContext { self.error = error.localizedDescription } }
         }
     }
 }

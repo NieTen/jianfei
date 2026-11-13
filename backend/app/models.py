@@ -10,7 +10,9 @@ class InputModel(BaseModel):
 
 
 class Registration(InputModel):
-    username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_.-]+$")
+    username: str | None = Field(default=None, min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_.-]+$")
+    email: str | None = Field(default=None, max_length=254)
+    email_code: str | None = Field(default=None, min_length=6, max_length=6)
     password: str = Field(min_length=10, max_length=128)
     display_name: str = Field(min_length=1, max_length=40)
     # 兼容旧客户端提交的字段，新版注册不再要求或验证开户凭据。
@@ -34,6 +36,40 @@ class RecoveryRequest(InputModel):
     username: str
     recovery_code: str
     new_password: str = Field(min_length=10, max_length=128)
+
+
+class EmailCodeRequest(InputModel):
+    email: str = Field(min_length=3, max_length=254)
+    purpose: Literal["register", "reset_password"]
+
+
+class EmailResetRequest(InputModel):
+    email: str = Field(min_length=3, max_length=254)
+    email_code: str = Field(min_length=6, max_length=6)
+    new_password: str = Field(min_length=10, max_length=128)
+
+
+class PasswordChangeRequest(InputModel):
+    current_password: str = Field(max_length=128)
+    new_password: str = Field(min_length=10, max_length=128)
+
+
+class EmailBindingCodeRequest(InputModel):
+    email: str = Field(min_length=3, max_length=254)
+    current_password: str = Field(max_length=128)
+
+
+class EmailBindingRequest(EmailBindingCodeRequest):
+    email_code: str = Field(min_length=6, max_length=6)
+
+
+class AIConsentRequest(InputModel):
+    allowed: bool
+    provider_revision: int = Field(ge=0)
+
+
+class AIPreferenceRequest(InputModel):
+    model_id: str = Field(min_length=1, max_length=200)
 
 
 class DeviceAction(InputModel):
@@ -275,6 +311,8 @@ class MediaInit(InputModel):
     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     mime_type: str = "image/jpeg"
     temporary: bool = False
+    consent_revision: int | None = Field(default=None, ge=0)
+    provider_revision: int | None = Field(default=None, ge=0)
 
 
 class RecognitionRequest(InputModel):
@@ -284,6 +322,8 @@ class RecognitionRequest(InputModel):
     photo_ids: list[str] = Field(min_length=1, max_length=6)
     note: str = Field(default="", max_length=2000)
     allow_external: bool = False
+    consent_revision: int | None = Field(default=None, ge=0)
+    provider_revision: int | None = Field(default=None, ge=0)
 
 
 class AISettingsRequest(InputModel):

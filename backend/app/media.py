@@ -22,6 +22,8 @@ warnings.simplefilter("error", Image.DecompressionBombWarning)
 class MediaService:
     def __init__(self, database, settings):
         self.db = database
+        self.settings = settings
+        self.entitlements = None
         self.root = settings.data_dir / "media"
         self.temp = settings.data_dir / "tmp"
         self.lock = threading.RLock()
@@ -39,12 +41,14 @@ class MediaService:
         media_id = self.safe_id(request.id)
         with self.db.transaction() as repo:
             validate_actor(repo, actor)
+            if self.settings.deployment_mode == "cloud" and request.temporary:
+                self.entitlements.check_consent(repo, actor["user_id"], request.provider_revision, request.consent_revision)
             meal = repo.one("entities", {"id": request.meal_id, "user_id": actor["user_id"]})
             if meal and meal["deleted_at"]:
                 raise AppError("ENTITY_DELETED", "餐次已经删除", 409)
             existing = repo.one("media", {"id": media_id})
             if existing:
-                if existing["user_id"] != actor["user_id"] or existing["expected_hash"] != request.sha256:
+                if existing["user_id"] != actor["user_id"] or existing["expected_hash"] != request.sha256 or existing["meal_id"] != request.meal_id:
                     raise AppError("FORBIDDEN", "照片标识冲突", 409)
                 if existing["status"] in ("deleted", "purged"):
                     raise AppError("ENTITY_DELETED", "照片已经删除", 409)
@@ -55,12 +59,17 @@ class MediaService:
                 elif existing["temporary"] and not request.temporary:
                     repo.update("media", {"temporary": 0}, {"id": media_id})
                     existing["temporary"] = 0
+                if self.settings.deployment_mode == "cloud" and request.temporary:
+                    revisions = {"consent_revision": request.consent_revision, "provider_revision": request.provider_revision}
+                    repo.update("media", revisions, {"id": media_id})
+                    existing.update(revisions)
                 return existing
             value = {
                 "id": media_id, "user_id": actor["user_id"], "meal_id": request.meal_id,
                 "expected_size": request.size, "expected_hash": request.sha256, "received_size": 0,
                 "mime_type": request.mime_type, "status": "uploading", "created_at": now_iso(),
                 "temporary": int(request.temporary),
+                "consent_revision": request.consent_revision, "provider_revision": request.provider_revision,
             }
             repo.insert("media", value)
             return value
@@ -74,6 +83,8 @@ class MediaService:
             media = repo.one("media", {"id": media_id, "user_id": actor["user_id"]})
             if not media:
                 raise AppError("NOT_FOUND", "照片上传任务不存在", 404)
+            if self.settings.deployment_mode == "cloud" and media["temporary"]:
+                self.entitlements.check_consent(repo, actor["user_id"], media["provider_revision"], media["consent_revision"])
             if media["status"] == "ready":
                 return media
             if media["status"] in ("deleted", "purged"):

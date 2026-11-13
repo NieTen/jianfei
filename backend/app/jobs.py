@@ -13,12 +13,13 @@ logger = logging.getLogger("jianfei.jobs")
 
 
 class JobRunner:
-    def __init__(self, database, settings, ai, data, challenges, maintenance, push, media):
+    def __init__(self, database, settings, ai, data, challenges, maintenance, push, media, email=None):
         self.db, self.settings = database, settings
         self.ai, self.data, self.challenges = ai, data, challenges
         self.maintenance, self.push, self.media = maintenance, push, media
         self.stopping = asyncio.Event()
         self.tasks = []
+        self.email = email
 
     async def start(self):
         await asyncio.to_thread(self.recover_interrupted)
@@ -27,10 +28,24 @@ class JobRunner:
             asyncio.create_task(self.worker(["export", "delete", "backup"])),
             asyncio.create_task(self.periodic()),
         ]
+        if self.email:
+            self.tasks.append(asyncio.create_task(self.email_worker()))
+
+    async def email_worker(self):
+        while not self.stopping.is_set():
+            try:
+                handled = await asyncio.to_thread(self.email.deliver_pending)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                handled = False
+                logger.warning("邮件投递任务暂未完成")
+            await asyncio.sleep(0.1 if handled else 1)
 
     def recover_interrupted(self):
         # 单实例锁已取得，旧 running 状态不会再由其他进程执行。
         with self.db.transaction() as repo:
+            repo.update("email_deliveries", {"status": "pending"}, {"status": "sending"})
             for task in repo.find("tasks", {"status": "running"}):
                 status = "unknown" if task["kind"] == "recognition" else "pending"
                 repo.update("tasks", {"status": status, "lease_until": None,
@@ -101,6 +116,8 @@ class JobRunner:
                 payload = json.loads(task["payload"])
                 if task["kind"] == "recognition":
                     payload.pop("_provider_snapshot", None)
+                    if self.settings.deployment_mode == "cloud":
+                        self.ai.entitlements.settle(repo, task_id, completed=status == "completed")
                 repo.update("tasks", {"status": status, "result": json.dumps(result, ensure_ascii=False) if result is not None else None,
                                       "payload": json.dumps(payload), "error": error, "lease_until": retry_at, "updated_at": now_iso()}, {"id": task_id})
 

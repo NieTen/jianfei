@@ -20,6 +20,8 @@ class RequestGuard:
     def __init__(self, app):
         self.app = app
         self.attempts = defaultdict(deque)
+        self.last_cleanup = 0
+        self.maximum_buckets = 10000
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -27,7 +29,13 @@ class RequestGuard:
         path = scope.get("path", "")
         client = (scope.get("client") or ("unknown", 0))[0]
         now = time.monotonic()
+        if now - self.last_cleanup >= 60:
+            self.attempts = defaultdict(deque, {key: history for key, history in self.attempts.items() if history and history[-1] >= now - 60})
+            self.last_cleanup = now
         key = (client, "auth" if "/auth/" in path else "api")
+        if key not in self.attempts and len(self.attempts) >= self.maximum_buckets:
+            response = JSONResponse({"code": "RATE_LIMITED", "message": "请求过于频繁，请稍后再试", "retryable": True}, 429)
+            return await response(scope, receive, send)
         history = self.attempts[key]
         while history and history[0] < now - 60:
             history.popleft()

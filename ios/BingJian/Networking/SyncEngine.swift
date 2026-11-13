@@ -121,19 +121,24 @@ actor SyncEngine {
         }
     }
 
-    func uploadRecognitionPhotos(mealId: String, photoIds: [String]) async throws {
+    func uploadRecognitionPhotos(mealId: String, photoIds: [String], authorization: JSONObject = [:], expectedContext: UUID) async throws {
         for id in photoIds {
             try Task.checkCancellation()
-            try await uploadPhoto(id: id, mealId: mealId, url: store.photoURL(id), temporary: true)
+            try await uploadPhoto(id: id, mealId: mealId, url: store.photoURL(id), temporary: true,
+                                  authorization: authorization, expectedContext: expectedContext)
         }
     }
 
-    private func uploadPhoto(id: String, mealId: String, url: URL, temporary: Bool) async throws {
+    private func uploadPhoto(id: String, mealId: String, url: URL, temporary: Bool, authorization: JSONObject = [:],
+                             expectedContext: UUID? = nil) async throws {
         let data = try Data(contentsOf: url)
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        let initialized = try await api.send("media/upload-init", method: "POST",
-            body: ["id": .string(id), "meal_id": .string(mealId), "size": .number(Double(data.count)),
-                   "sha256": .string(hash), "mime_type": .string("image/jpeg"), "temporary": .bool(temporary)])
+        var body: JSONObject = ["id": .string(id), "meal_id": .string(mealId), "size": .number(Double(data.count)),
+                                "sha256": .string(hash), "mime_type": .string("image/jpeg"), "temporary": .bool(temporary)]
+        if temporary {
+            for key in ["consent_revision", "provider_revision"] { body[key] = authorization[key] }
+        }
+        let initialized = try await api.send("media/upload-init", method: "POST", body: body, expectedContext: expectedContext)
         var offset = Int(initialized.object?.number("received_size") ?? 0)
         var status = initialized.object?.text("status") ?? ""
         var attempts = 0
@@ -144,7 +149,8 @@ actor SyncEngine {
             }
             let end = min(offset + 1024 * 1024, data.count)
             let responseData = try await api.request("media/\(id)", method: "PUT",
-                data: data.subdata(in: offset..<end), query: ["offset": String(offset)], contentType: "application/octet-stream")
+                data: data.subdata(in: offset..<end), query: ["offset": String(offset)], contentType: "application/octet-stream",
+                expectedContext: expectedContext)
             let response = try JSONDecoder().decode(JSONObject.self, from: responseData)
             if response.text("status") == "hash_mismatch" {
                 throw APIError(code: "IMAGE_HASH", message: "图片校验失败，请重试", retryable: true)

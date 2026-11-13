@@ -283,9 +283,19 @@ class DataService:
             repo.delete("encouragements", {"sender_id": user_id})
             repo.update("members", {"goal": "{}", "baseline": None, "status": "left"}, {"user_id": user_id})
             repo.delete("tasks", {"user_id": user_id, "id__ne": task["id"]})
+            for table in ("cloud_ai_preferences", "cloud_ai_consents"):
+                repo.delete(table, {"user_id": user_id})
+            # 清空健康数据不能重置当天 AI 成本或丢失仍有效的会员授权。
+            repo.update("ai_usage", {"status": "released", "updated_at": now_iso()}, {"user_id": user_id, "status": "reserved"})
             if json.loads(task["payload"])["delete_account"]:
+                user = repo.one("users", {"id": user_id})
+                if user["email"]:
+                    repo.delete("email_challenges", {"email": user["email"]})
+                for table in ("entitlement_grants", "entitlement_events", "ai_usage", "email_challenges"):
+                    repo.delete(table, {"user_id": user_id})
                 repo.update("users", {"status": "deleted", "display_name": "已注销用户",
-                                      "password_hash": "", "recovery_hash": ""}, {"id": user_id})
+                                      "password_hash": "", "recovery_hash": "", "email": None,
+                                      "email_verified_at": None}, {"id": user_id})
                 repo.update("devices", {"revoked_at": now_iso(), "push_token": None}, {"user_id": user_id})
             else:
                 repo.update("users", {"status": "active"}, {"id": user_id})
