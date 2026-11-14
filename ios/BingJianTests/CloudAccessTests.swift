@@ -2,11 +2,27 @@ import XCTest
 @testable import BingJian
 
 final class CloudAccessTests: XCTestCase {
-    func testOfficialServerRequiresHTTPSAndRejectsCredentials() {
+    func testOfficialServerKeepsHTTPSValidationAndRejectsCredentials() {
         XCTAssertNil(CloudDeployment.validatedURL("http://cloud.example.test"))
         XCTAssertNil(CloudDeployment.validatedURL("https://user:password@cloud.example.test"))
         XCTAssertNil(CloudDeployment.validatedURL("https://cloud.example.test?api_key=value"))
+        XCTAssertNil(CloudDeployment.validatedURL("https://cloud.example.test#fragment"))
         XCTAssertEqual(CloudDeployment.validatedURL("https://cloud.example.test/api/v1")?.absoluteString, "https://cloud.example.test")
+    }
+
+    func testOfficialServerAllowsOnlyTheSpecifiedLocalHTTPRoot() {
+        for address in ["http://192.168.50.229:8000", " HTTP://192.168.50.229:8000/api/v1/ "] {
+            XCTAssertEqual(CloudDeployment.validatedURL(address), CloudDeployment.localHTTPServerURL)
+        }
+        for address in [
+            "http://192.168.50.229", "http://192.168.50.229:8001",
+            "http://192.168.50.228:8000", "http://192.168.50.229.evil.test:8000",
+            "http://192.168.50.229:8000/other", "http://127.0.0.1:8000", "http://10.0.0.1:8000",
+            "http://user:password@192.168.50.229:8000", "http://192.168.50.229:8000?api_key=value",
+            "http://192.168.50.229:8000#fragment", ""
+        ] {
+            XCTAssertNil(CloudDeployment.validatedURL(address), "不应接受未明确允许的云地址：\(address)")
+        }
     }
 
     func testEntitlementLeaseUsesServerRemainingTimeAndFailsClosed() {

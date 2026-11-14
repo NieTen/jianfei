@@ -269,7 +269,8 @@ def main():
     main_group = add("MainGroup", "PBXGroup", children=groups + [products_group], sourceTree="<group>")
     add("Project", "PBXProject", attributes={"BuildIndependentTargetsInParallel": "YES", "LastUpgradeCheck": "1600"},
         buildConfigurationList=configurations("Project", {"CLANG_ENABLE_MODULES": "YES", "SWIFT_VERSION": "5.0",
-                                                         "APP_BUNDLE_IDENTIFIER": "com.bingjian.health"}),
+                                                         "APP_BUNDLE_IDENTIFIER": "com.bingjian.health",
+                                                         "BINGJIAN_CLOUD_SERVER_URL": "http://192.168.50.229:8000"}),
         compatibilityVersion="Xcode 14.0", developmentRegion="zh_CN", hasScannedForEncodings=0, knownRegions=["zh_CN", "en", "Base"],
         mainGroup=main_group, productRefGroup=products_group, projectDirPath="", projectRoot="", targets=target_ids)
     project = ROOT / "BingJian.xcodeproj"

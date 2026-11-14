@@ -176,6 +176,7 @@ jobs:
             -derivedDataPath build/SimulatorData \
             -resultBundlePath build/Appearance.xcresult \
             -parallel-testing-enabled NO \
+            BINGJIAN_CLOUD_SERVER_URL= \
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=- \

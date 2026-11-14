@@ -181,9 +181,9 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        if serverURL.isEmpty, let officialCloudURL {
-            try? await api.configure(officialCloudURL.absoluteString)
-            serverURL = officialCloudURL.absoluteString
+        if let officialCloudURL {
+            do { try await selectConfiguredCloudServer(officialCloudURL) }
+            catch { errorMessage = error.localizedDescription }
         }
         session = await api.currentSession()
         // 登录凭据不可读不等于用户切换了身份，继续使用已选中的本地记录。
@@ -1248,11 +1248,28 @@ extension AppModel {
         APIError(code: "CLOUD_AI_MANAGED", message: "云端 AI 由平台配置，请在允许的模型列表中选择")
     }
 
+    private func selectConfiguredCloudServer(_ destination: URL) async throws {
+        guard (try? ServerAddress.normalize(serverURL)) != destination
+                || UserDefaults.standard.string(forKey: "server_url") != destination.absoluteString else { return }
+        await stopBackgroundWork()
+        defer { changingAccount = false }
+        // 构建配置升级只更换服务连接，不切换用户当前查看的本地记录。
+        // configure 先撤销旧会话，再保存新地址，禁止把旧凭据转发给新服务。
+        try await api.configure(destination.absoluteString)
+        session = await api.currentSession()
+        serverURL = destination.absoluteString
+        serverDeploymentMode = UserDefaults.standard.string(forKey: "server_deployment:" + serverURL) ?? ""
+        deploymentChecked = false
+        cloudReady = false
+        loadAIConfiguration()
+    }
+
     func enterCloudAccount() async throws {
         guard let destination = officialCloudURL ?? (serverDeploymentMode == "cloud" ? CloudDeployment.validatedURL(serverURL) : nil) else {
             throw APIError(code: "CLOUD_NOT_CONFIGURED", message: "官方云地址尚未配置，可继续使用本地记录或已有私有服务器")
         }
-        try await saveServerAddress(destination.absoluteString)
+        try await selectConfiguredCloudServer(destination)
+        await refreshCloudAccount()
         guard isCloudMode, cloudReady else {
             throw APIError(code: "CLOUD_UNAVAILABLE", message: cloudAccessError ?? "官方云暂不可用，请稍后重试")
         }
@@ -1286,8 +1303,8 @@ extension AppModel {
                 guard ["private", "cloud"].contains(mode), !isCloudMode || mode == "cloud" else {
                     throw APIError(code: "CLOUD_CONFIGURATION", message: "服务部署模式与当前客户端不一致")
                 }
-                if mode == "cloud", URL(string: address)?.scheme != "https" {
-                    throw APIError(code: "CLOUD_HTTPS_REQUIRED", message: "官方云账号必须使用 HTTPS 地址")
+                if mode == "cloud", CloudDeployment.validatedURL(address) == nil {
+                    throw APIError(code: "CLOUD_HTTPS_REQUIRED", message: "官方云账号需使用 HTTPS 或已配置的局域网服务地址")
                 }
                 serverDeploymentMode = mode
                 UserDefaults.standard.set(mode, forKey: "server_deployment:" + address)

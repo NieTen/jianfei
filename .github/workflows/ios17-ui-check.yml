@@ -56,6 +56,7 @@ jobs:
             -derivedDataPath build/iOS17/DerivedData \
             -resultBundlePath build/iOS17/Tests.xcresult \
             -parallel-testing-enabled NO \
+            BINGJIAN_CLOUD_SERVER_URL= \
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=- \
