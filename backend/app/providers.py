@@ -77,6 +77,17 @@ class ProviderService:
             "protocol": self.settings.ai_protocol, "version": 0, "source": "server_default",
         }
 
+    def operational_status(self):
+        """运维状态使用实际部署模式的配置来源，绝不返回密钥。"""
+        if not self.cloud:
+            return {"configured": bool(self.settings.ai_url), "enabled": bool(self.settings.ai_url),
+                    "source": "server_default", "revision": 0}
+        with self.db.read() as repo:
+            row = repo.one("cloud_ai_provider", {"id": "platform"})
+        return {"configured": bool(row and row["base_url"] and json.loads(row["models"])),
+                "enabled": bool(row and row["enabled"]), "source": "platform",
+                "revision": row["revision"] if row else 0}
+
     def public_configuration(self, user_id):
         if self.cloud:
             with self.db.read() as repo:
@@ -267,6 +278,8 @@ class ProviderService:
             if request is not None:
                 if request.allowed:
                     self.entitlements.require(repo, actor["user_id"])
+                    if request.expected_revision is not None and request.expected_revision != (row["revision"] if row else 0):
+                        raise AppError("AI_CONSENT_CHANGED", "照片处理授权已变化，请刷新后重新确认", 409)
                     if not provider or not provider["enabled"]:
                         raise AppError("AI_UNAVAILABLE", "平台 AI 服务尚未配置", 503, True)
                     if request.provider_revision != revision:

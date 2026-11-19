@@ -6,6 +6,7 @@ struct SyncReport: Sendable {
     var downloaded = 0
     var conflicts = 0
     var failed = 0
+    var needsContinuation = false
 }
 
 /// 编排握手、命令、照片、记录推送和分页拉取；记录状态由 LocalDatabase 持久化。
@@ -14,6 +15,7 @@ actor SyncEngine {
     private let api: APIClient
     private let store: LocalDatabase
     private var running = false
+    private var photoCursor: LocalPageCursor?
 
     init(api: APIClient, store: LocalDatabase) {
         self.api = api
@@ -26,8 +28,12 @@ actor SyncEngine {
         defer { running = false }
         var report = SyncReport()
         do {
+            let context = await api.requestContext()
             guard let session = await api.currentSession() else { throw APIError(code: "AUTH_REQUIRED", message: "登录后可同步") }
-            let capabilities = try await api.send("capabilities")
+            if let binding = try await store.metadata("bound_user"), binding != session.instanceId + ":" + session.userId {
+                throw APIError(code: "ACCOUNT_CHANGED", message: "当前本机记录不属于此云端账号，请重新登录对应账号")
+            }
+            let capabilities = try await api.send("capabilities", expectedContext: context)
             guard let handshake = capabilities.object else { throw APIError(code: "INVALID_RESPONSE", message: "服务握手失败") }
             let oldGeneration = try await store.metadata("generation")
             if let oldGeneration, oldGeneration != String(session.generation) {
@@ -37,15 +43,21 @@ actor SyncEngine {
             if let knownInstance, knownInstance != handshake.text("instance_id") {
                 throw APIError(code: "SERVER_CHANGED", message: "服务器身份已变化，请确认迁移后重新建立同步")
             }
-            try await sendCommands()
+            if try await sendCommands(context: context) {
+                report.needsContinuation = true
+                return report
+            }
             let oldEpoch = try await store.metadata("epoch")
             if oldEpoch != handshake.text("epoch") {
-                report.downloaded += try await restoreSnapshot()
+                report.downloaded += try await restoreSnapshot(context: context)
             }
             try await store.setMetadata("instance_id", value: handshake.text("instance_id"))
             try await store.setMetadata("generation", value: String(session.generation))
             try await store.setMetadata("epoch", value: handshake.text("epoch"))
-            try await uploadPhotos()
+            if try await uploadPhotos(context: context) {
+                report.needsContinuation = true
+                return report
+            }
             while true {
                 try Task.checkCancellation()
                 let mutations = try await store.nextBatch()
@@ -54,7 +66,7 @@ actor SyncEngine {
                 let response = try await api.send("sync/push", method: "POST", body: [
                     "epoch": .string(handshake.text("epoch")), "generation": .number(Double(session.generation)),
                     "changes": .array(array)
-                ])
+                ], expectedContext: context)
                 let results = response.object?.objects("results") ?? []
                 var shouldStop = false
                 for result in results {
@@ -79,9 +91,9 @@ actor SyncEngine {
                 }
                 if shouldStop { break }
             }
-            do { report.downloaded += try await pullChanges() }
+            do { report.downloaded += try await pullChanges(context: context) }
             catch let error as APIError where error.code == "CURSOR_EXPIRED" || error.code == "EPOCH_CHANGED" {
-                report.downloaded += try await restoreSnapshot()
+                report.downloaded += try await restoreSnapshot(context: context)
             }
             try await store.setMetadata("last_sync", value: TimeFormat.iso())
             try await store.log("同步结果，上传 \(report.uploaded) 条，接收 \(report.downloaded) 条，失败 \(report.failed) 条，冲突 \(report.conflicts) 条")
@@ -93,32 +105,54 @@ actor SyncEngine {
         }
     }
 
-    private func sendCommands() async throws {
-        for command in try await store.pendingCommands() {
+    /// 每轮最多执行200条，下一轮重新按优先级取队首；未完成撤权不能被照片或记录推送越过。
+    private func sendCommands(context: UUID) async throws -> Bool {
+        var processed = 0
+        while processed < 200 {
             try Task.checkCancellation()
-            var body = command["body"]?.object ?? [:]
-            do {
-                _ = try await api.send(command.text("path"), method: command.text("method"), body: body)
-            } catch let error as APIError where error.code == "VERSION_CONFLICT" &&
-                command.text("path").hasSuffix("/consent") && body.strings("scopes").isEmpty {
-                let base = String(command.text("path").dropLast("/consent".count))
-                let response = try await api.send(base + "/consents")
-                let latest = response.array?.compactMap(\.object).first { $0.text("recipient_id") == body.text("recipient_id") }
-                body["expected_version"] = .number(latest?.number("version") ?? 0)
-                _ = try await api.send(command.text("path"), method: command.text("method"), body: body)
+            let batch = try await store.pendingCommands(limit: min(50, 200 - processed))
+            if batch.isEmpty { return false }
+            for command in batch {
+                try Task.checkCancellation()
+                var body = command["body"]?.object ?? [:]
+                do {
+                    _ = try await api.send(command.text("path"), method: command.text("method"), body: body, expectedContext: context)
+                } catch let error as APIError where error.code == "VERSION_CONFLICT" &&
+                    command.text("path").hasSuffix("/consent") && body.strings("scopes").isEmpty {
+                    let base = String(command.text("path").dropLast("/consent".count))
+                    let response = try await api.send(base + "/consents", expectedContext: context)
+                    let latest = response.array?.compactMap(\.object).first { $0.text("recipient_id") == body.text("recipient_id") }
+                    body["expected_version"] = .number(latest?.number("version") ?? 0)
+                    _ = try await api.send(command.text("path"), method: command.text("method"), body: body, expectedContext: context)
+                }
+                try await store.removeCommand(command.text("id"))
+                processed += 1
             }
-            try await store.removeCommand(command.text("id"))
+            await Task.yield()
         }
+        return try await store.hasPendingCommands()
     }
 
-    private func uploadPhotos() async throws {
-        for (id, mealId, url) in try await store.pendingPhotos() {
+    private func uploadPhotos(context: UUID) async throws -> Bool {
+        var examined = 0
+        while examined < 200 {
             try Task.checkCancellation()
-            guard let record = try await store.record(mealId), record.deletedAt == nil,
-                  let meal = record.decode(MealEntry.self), meal.syncPhotos,
-                  FileManager.default.fileExists(atPath: url.path) else { continue }
-            try await uploadPhoto(id: id, mealId: mealId, url: url, temporary: false)
+            let batch = try await store.pendingPhotos(after: photoCursor, limit: min(50, 200 - examined))
+            for photo in batch.items {
+                try Task.checkCancellation()
+                // 查询后用户仍可能撤销同步；再次读取该餐次，且绝不将跳过的照片标为已上传。
+                if let record = try await store.record(photo.mealId), record.deletedAt == nil,
+                   let meal = record.decode(MealEntry.self), meal.syncPhotos,
+                   FileManager.default.fileExists(atPath: photo.url.path) {
+                    try await uploadPhoto(id: photo.id, mealId: photo.mealId, url: photo.url, temporary: false, expectedContext: context)
+                }
+                photoCursor = photo.cursor
+                examined += 1
+            }
+            if batch.nextCursor == nil { photoCursor = nil; return false }
+            await Task.yield()
         }
+        return true
     }
 
     func uploadRecognitionPhotos(mealId: String, photoIds: [String], authorization: JSONObject = [:], expectedContext: UUID) async throws {
@@ -162,13 +196,13 @@ actor SyncEngine {
         if !temporary { try await store.photoUploaded(id) }
     }
 
-    private func pullChanges() async throws -> Int {
+    private func pullChanges(context: UUID) async throws -> Int {
         var total = 0
         while true {
             try Task.checkCancellation()
             var query: [String: String] = [:]
             if let cursor = try await store.metadata("sync_cursor") { query["cursor"] = cursor }
-            let response = try await api.send("sync/pull", query: query)
+            let response = try await api.send("sync/pull", query: query, expectedContext: context)
             guard let object = response.object else { throw APIError(code: "INVALID_RESPONSE", message: "同步结果无效") }
             let records = try object.objects("entities").map { try Codec.decode(AppRecord.self, from: $0) }
             try await store.applyRemote(records, cursor: object.text("cursor"))
@@ -178,23 +212,29 @@ actor SyncEngine {
     }
 
     // 分页快照完成后才提交最终游标与集合信息，未完成的分页不能被当成全量恢复成功。
-    private func restoreSnapshot() async throws -> Int {
-        let response = try await api.send("sync/snapshots", method: "POST", body: [:])
+    private func restoreSnapshot(context: UUID) async throws -> Int {
+        let response = try await api.send("sync/snapshots", method: "POST", body: [:], expectedContext: context)
         guard let snapshot = response.object else { throw APIError(code: "INVALID_RESPONSE", message: "快照创建失败") }
         let snapshotId = snapshot.text("snapshot_id")
         var after = ""
-        var seen = Set<String>()
+        var total = 0
+        try await store.beginSnapshot()
         while true {
             try Task.checkCancellation()
-            let page = try await api.send("sync/snapshots/\(snapshotId)", query: ["after": after])
+            let page = try await api.send("sync/snapshots/\(snapshotId)", query: ["after": after], expectedContext: context)
             guard let object = page.object else { throw APIError(code: "INVALID_RESPONSE", message: "快照内容无效") }
             let records = try object.objects("entities").map { try Codec.decode(AppRecord.self, from: $0) }
-            seen.formUnion(records.map(\.id))
-            try await store.applyRemote(records, cursor: nil)
+            try await store.applySnapshotPage(records)
+            total += records.count
             after = object.text("after")
             if !object.flag("has_more") { break }
         }
-        try await store.finishSnapshot(cursor: snapshot.text("cursor"), seen: seen)
-        return seen.count
+        var cleanupCursor: String?
+        repeat {
+            try Task.checkCancellation()
+            cleanupCursor = try await store.finishSnapshot(cursor: snapshot.text("cursor"), after: cleanupCursor)
+            await Task.yield()
+        } while cleanupCursor != nil
+        return total
     }
 }

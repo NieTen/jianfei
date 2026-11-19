@@ -72,7 +72,10 @@ class EmailVerificationService:
             if len(recent) >= 5 or (recent and recent[0]["created_at"] > (now - timedelta(seconds=60)).isoformat()):
                 raise AppError("EMAIL_RATE_LIMITED", "验证码发送过于频繁，请稍后重试", 429)
             user = repo.one("users", {"email": email, "status": "active"})
-            deliver = (purpose == "register" and user is None) or (purpose == "reset_password" and user is not None) or (purpose == "bind_email" and (user is None or user["id"] == user_id))
+            deliver = ((purpose == "register" and user is None)
+                       or (purpose == "reset_password" and user is not None)
+                       or (purpose == "bind_email" and (user is None or user["id"] == user_id))
+                       or (purpose == "device_recovery" and user is not None and user["id"] == user_id))
             # 无对应账号的找回请求也记录相同限流状态，并返回相同响应。
             repo.update("email_challenges", {"used_at": now.isoformat()}, {"email": email, "purpose": purpose, "used_at": None})
             repo.insert("email_challenges", {"id": identifier, "user_id": user_id or (user["id"] if user else None),
@@ -120,7 +123,7 @@ class EmailVerificationService:
             rows = repo.find("email_challenges", {"email": email, "purpose": purpose}, order=["-created_at"], limit=1)
             challenge = rows[0] if rows else None
             if challenge and not challenge["used_at"] and challenge["expires_at"] > now_iso() and challenge["attempts"] < 5:
-                matches_user = purpose != "bind_email" or challenge["user_id"] == user_id
+                matches_user = purpose not in ("bind_email", "device_recovery") or challenge["user_id"] == user_id
                 valid = matches_user and hmac.compare_digest(challenge["code_hash"], self.digest(challenge["id"], code or ""))
                 # 无效尝试必须先提交，不能因随后抛错而被事务回滚。
                 repo.update("email_challenges", {"attempts": challenge["attempts"] + 1,

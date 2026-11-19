@@ -4,7 +4,7 @@ import XCTest
 @testable import BingJian
 
 /// 用独立 SQLite 连接准备大量历史数据；查询、分页、迁移和清理均调用实际 LocalDatabase。
-private final class LocalSQLiteFixture {
+final class LocalSQLiteFixture {
     let store: LocalDatabase
     let directory: URL
     private var connection: OpaquePointer?

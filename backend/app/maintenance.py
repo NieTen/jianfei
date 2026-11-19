@@ -28,7 +28,7 @@ class MaintenanceService:
         with self.db.write_lock:
             with self.db.read() as repo:
                 rows = repo.find("deletion_ledger", order=["created_at"], limit=1_000_000)
-            events = {row["id"]: row for row in self.deletion_events() + rows}
+            events = {row["id"]: row for row in self.deletion_events(include_replica=False) + rows}
             temporary = self.ledger_path.with_suffix(".tmp")
             with temporary.open("w", encoding="utf-8") as handle:
                 json.dump(list(events.values()), handle, ensure_ascii=False)
@@ -36,15 +36,33 @@ class MaintenanceService:
                 os.fsync(handle.fileno())
             temporary.replace(self.ledger_path)
 
-    def deletion_events(self):
+    def deletion_events(self, include_replica=True):
         saved = json.loads(self.ledger_path.read_text(encoding="utf-8")) if self.ledger_path.exists() else []
-        events = {row["id"]: row for row in saved + self.db.deletion_journal.read()}
+        rows = saved + self.db.deletion_journal.read()
+        # 日常本地备份独立于远端挂载。灾难恢复必须合并异地账本，读取失败便停止恢复。
+        if include_replica:
+            rows.extend(self.db.deletion_journal.read_replica())
+        events = {row["id"]: row for row in rows}
         return sorted(events.values(), key=lambda row: (row["created_at"], row["id"]))
 
-    def backup(self, password=None, incremental=True):
+    def backup(self, password=None, incremental=True, task_id=None):
         password = password or self.settings.backup_password
         if not password or len(password) < 10:
             raise AppError("BACKUP_PASSWORD_REQUIRED", "请配置至少 10 位的独立备份密码")
+        if task_id:
+            with self.db.read() as repo:
+                task = repo.one("tasks", {"id": task_id, "kind": "backup"})
+            previous = json.loads(task["payload"]).get("verified_local_backup") if task else None
+            if previous:
+                source = self.settings.data_dir / "backups" / Path(previous["filename"]).name
+                if not source.is_file() or file_hash(source) != previous["sha256"]:
+                    raise AppError("BACKUP_LOCAL_MISSING", "待重传的已验证备份不可用，请检查磁盘后手动重新备份")
+                references = json.loads(source.with_suffix(".refs.json").read_text(encoding="utf-8"))
+                self.replicate_backup(source, references, password)
+                previous["replica"] = {"configured": True, "verified": True, "completed_at": now_iso()}
+                with self.db.transaction() as repo:
+                    repo.update("settings", {"value": json.dumps(previous)}, {"key": "last_backup"})
+                return previous
         identifier = str(uuid.uuid4())
         work = self.settings.data_dir / "tmp" / ("backup-" + identifier)
         work.mkdir()
@@ -67,6 +85,7 @@ class MaintenanceService:
                 plain = work / "backup.plain"
                 with plain.open("wb") as writer:
                     manifest = json.dumps({"schema_version": 1, "created_at": now_iso(), "files": files,
+                                           "deletion_ledger_id": self.db.deletion_journal.replica_id,
                                            "media_mode": "incremental" if incremental else "full"}, ensure_ascii=False).encode()
                     write_frame(writer, {"type": "backup_manifest", "length": len(manifest)}, manifest)
                     for path, name in paths:
@@ -95,20 +114,79 @@ class MaintenanceService:
                 index = output.with_suffix(".refs.json")
                 index.write_text(json.dumps(references), encoding="utf-8")
                 pending.replace(output)
+                # 副本复制只读取已完成的加密文件，远端 I/O 不占用业务库维护窗口。
+                self.db.maintenance = False
+            result = {"filename": output.name, "completed_at": now_iso(), "sha256": file_hash(output), "restore_verified": True,
+                      "media_mode": "incremental" if incremental else "full", "referenced_objects": len(set(references))}
+            if task_id and self.settings.backup_replica_dir:
+                with self.db.transaction(allow_maintenance=True) as repo:
+                    task = repo.one("tasks", {"id": task_id, "kind": "backup"})
+                    payload = json.loads(task["payload"])
+                    payload["verified_local_backup"] = result
+                    repo.update("tasks", {"payload": json.dumps(payload)}, {"id": task_id, "kind": "backup"})
+            replica = {"configured": bool(self.settings.backup_replica_dir), "verified": False}
+            if self.settings.backup_replica_dir:
+                try:
+                    self.replicate_backup(output, references, password)
+                    replica.update(verified=True, completed_at=now_iso())
+                except Exception:
+                    replica["error"] = "异地副本未校验成功，请检查挂载、空间和备份密码"
             with self.db.transaction(allow_maintenance=True) as repo:
-                value = json.dumps({"filename": output.name, "completed_at": now_iso(),
-                                    "sha256": file_hash(output), "restore_verified": True,
-                                    "media_mode": "incremental" if incremental else "full",
-                                    "referenced_objects": len(set(references))})
+                value = json.dumps({**result, "replica": replica})
                 if repo.setting("last_backup"):
                     repo.update("settings", {"value": value}, {"key": "last_backup"})
                 else:
                     repo.insert("settings", {"key": "last_backup", "value": value})
+            if self.settings.backup_replica_required and not replica["verified"]:
+                raise AppError("BACKUP_REPLICA_FAILED", "本机备份已保存，但必需异地副本失败，任务将重试", 503, True)
             return json.loads(value)
         finally:
             self.db.maintenance = False
             pending.unlink(missing_ok=True)
             shutil.rmtree(work, ignore_errors=True)
+
+    @staticmethod
+    def copy_verified(source, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(destination.name + ".pending")
+        try:
+            with source.open("rb") as reader, temporary.open("wb") as writer:
+                shutil.copyfileobj(reader, writer, CHUNK_SIZE)
+                writer.flush()
+                os.fsync(writer.fileno())
+            if file_hash(source) != file_hash(temporary):
+                raise ValueError("副本校验失败")
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def replicate_backup(self, source, references, password):
+        root = Path(self.settings.backup_replica_dir)
+        if not root.is_dir() or not self.db.deletion_journal.replica_path.is_file():
+            raise ValueError("异地目录或独立账本不可用")
+        self.db.deletion_journal.verify_replica_header()
+        destination = root / "backups"
+        destination.mkdir(exist_ok=True)
+        for reference in set(references):
+            original = source.parent / "objects" / reference
+            copied = destination / "objects" / reference
+            if not copied.is_file() or file_hash(copied) != file_hash(original):
+                self.copy_verified(original, copied)
+        self.copy_verified(source.with_suffix(".refs.json"), destination / source.with_suffix(".refs.json").name)
+        self.copy_verified(source, destination / source.name)
+        validation = self.settings.data_dir / "tmp" / ("replica-check-" + str(uuid.uuid4()))
+        try:
+            self.unpack_backup(destination / source.name, password, validation)
+            status = {"filename": source.name, "sha256": file_hash(source), "verified_at": now_iso()}
+            temporary = root / "latest.json.pending"
+            with temporary.open("w", encoding="utf-8") as handle:
+                json.dump(status, handle)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary.replace(root / "latest.json")
+            self.cleanup_backup_directory(destination)
+        finally:
+            shutil.rmtree(validation, ignore_errors=True)
 
     def unpack_backup(self, encrypted, password, destination, object_directory=None):
         destination.mkdir(parents=True, exist_ok=True)
@@ -193,7 +271,11 @@ class MaintenanceService:
 
     def cleanup_backups(self):
         with self.db.write_lock:
-            directory = self.settings.data_dir / "backups"
+            self.cleanup_backup_directory(self.settings.data_dir / "backups")
+
+    @staticmethod
+    def cleanup_backup_directory(directory):
+        if directory.is_dir():
             threshold = (utc_now() - timedelta(days=30)).timestamp()
             retained = set()
             complete_index = True

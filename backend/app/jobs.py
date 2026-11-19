@@ -63,7 +63,7 @@ class JobRunner:
             return None
         with self.db.transaction() as repo:
             if "delete" in kinds:
-                failed = repo.find("tasks", {"kind": "delete", "status": "failed",
+                failed = repo.find("tasks", {"kind__in": ["delete", "backup"], "status": "failed",
                                              "attempts__lt": 5, "lease_until__lt": now_iso()}, limit=10)
                 for task in failed:
                     repo.update("tasks", {"status": "pending", "updated_at": now_iso()}, {"id": task["id"]})
@@ -97,7 +97,7 @@ class JobRunner:
                 elif task["kind"] == "delete":
                     result = await asyncio.to_thread(self.data.process_delete, task)
                 else:
-                    result = await asyncio.to_thread(self.maintenance.backup)
+                    result = await asyncio.to_thread(self.maintenance.backup, task_id=task["id"])
                 await asyncio.to_thread(self.finish, task["id"], "completed", result, None)
             except asyncio.CancelledError:
                 raise
@@ -112,7 +112,7 @@ class JobRunner:
         with self.db.transaction(allow_maintenance=True) as repo:
             task = repo.one("tasks", {"id": task_id})
             if task and task["status"] != "cancelled":
-                retry_at = (utc_now() + timedelta(minutes=5)).isoformat() if status == "failed" and task["kind"] == "delete" else None
+                retry_at = (utc_now() + timedelta(minutes=5)).isoformat() if status == "failed" and task["kind"] in ("delete", "backup") else None
                 payload = json.loads(task["payload"])
                 if task["kind"] == "recognition":
                     payload.pop("_provider_snapshot", None)

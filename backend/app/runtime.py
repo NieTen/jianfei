@@ -14,6 +14,7 @@ from .media import MediaService
 from .push import PushService
 from .providers import ProviderService
 from .records import RecordService
+from .sharing import ShareService
 
 
 class Runtime:
@@ -24,6 +25,8 @@ class Runtime:
         if exclusive:
             self.acquire_instance()
         self.db = Database(self.settings.data_dir / "db" / "app.sqlite3")
+        if self.settings.backup_replica_dir:
+            self.db.deletion_journal.configure_replica(self.settings.backup_replica_dir, self.settings.backup_password)
         self.db.initialize()
         self.auth = AuthService(self.db, self.settings)
         self.entitlements = EntitlementService(self.db, self.settings)
@@ -31,6 +34,7 @@ class Runtime:
         self.media = MediaService(self.db, self.settings)
         self.media.entitlements = self.entitlements
         self.challenges = ChallengeService(self.db, self.records)
+        self.shares = ShareService(self.db, self.records, self.media)
         self.records.challenge_service = self.challenges
         self.providers = ProviderService(self.db, self.settings, self.entitlements)
         self.ai = AIService(self.db, self.settings, self.media, self.providers, self.entitlements)

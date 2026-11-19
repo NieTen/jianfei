@@ -15,6 +15,7 @@ class Registration(InputModel):
     email_code: str | None = Field(default=None, min_length=6, max_length=6)
     password: str = Field(min_length=10, max_length=128)
     display_name: str = Field(min_length=1, max_length=40)
+    cloud_rules_version: Literal["1"] | None = None
     # 兼容旧客户端提交的字段，新版注册不再要求或验证开户凭据。
     bootstrap_code: str | None = None
     device_id: str = Field(min_length=8, max_length=80)
@@ -24,6 +25,18 @@ class Registration(InputModel):
 class Login(InputModel):
     username: str
     password: str
+    device_id: str = Field(min_length=8, max_length=80)
+    device_name: str = Field(default="我的 iPhone", max_length=80)
+
+
+class DeviceRecoveryCodeRequest(InputModel):
+    username: str = Field(min_length=1, max_length=254)
+    password: str = Field(max_length=128)
+    previous_device_id: str = Field(min_length=8, max_length=80)
+
+
+class DeviceRecoveryRequest(DeviceRecoveryCodeRequest):
+    email_code: str = Field(min_length=6, max_length=6)
     device_id: str = Field(min_length=8, max_length=80)
     device_name: str = Field(default="我的 iPhone", max_length=80)
 
@@ -66,6 +79,7 @@ class EmailBindingRequest(EmailBindingCodeRequest):
 class AIConsentRequest(InputModel):
     allowed: bool
     provider_revision: int = Field(ge=0)
+    expected_revision: int | None = Field(default=None, ge=0)
 
 
 class AIPreferenceRequest(InputModel):

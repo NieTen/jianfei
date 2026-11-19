@@ -10,10 +10,11 @@ actor APIClient {
     private var contextVersion = UUID()
 
     /// 默认沿用持久化会话；测试或临时客户端可显式使用独立偏好与纯内存凭据。
-    init(defaults: UserDefaults = .standard, persistCredentials: Bool = true) {
+    init(defaults: UserDefaults = .standard, persistCredentials: Bool = true,
+         sessionConfiguration: URLSessionConfiguration? = nil) {
         self.defaults = defaults
         self.persistCredentials = persistCredentials
-        let configuration = URLSessionConfiguration.ephemeral
+        let configuration = sessionConfiguration ?? URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 240
         configuration.waitsForConnectivity = false
@@ -170,11 +171,12 @@ actor APIClient {
         try setSession(credentials)
         return credentials
     }
-    func registerCloud(email: String, password: String, name: String, code: String, deviceId: String) async throws -> SessionCredentials {
+    func registerCloud(email: String, password: String, name: String, code: String, deviceId: String, rulesVersion: String) async throws -> SessionCredentials {
         clearSession()
         let context = contextVersion
         let response = try await send("auth/register", method: "POST", body: [
             "email": .string(email), "email_code": .string(code), "password": .string(password),
+            "cloud_rules_version": .string(rulesVersion),
             "display_name": .string(name.trimmingCharacters(in: .whitespacesAndNewlines)),
             "device_id": .string(deviceId), "device_name": .string("我的 iPhone")
         ], authenticated: false, expectedContext: context)

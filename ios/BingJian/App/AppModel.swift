@@ -24,6 +24,9 @@ final class AppModel: ObservableObject {
     private var cloudRefreshID = UUID()
     private var deploymentChecked = false
     private let officialCloudURL: URL?
+    private let cloudRevocations = CloudAIRevocationStore()
+    private var cloudConsentGrants: [String: Task<JSONObject, Error>] = [:]
+    private var cloudConsentIntentID = UUID()
 
     @Published var selectedDate = Date() {
         didSet {
@@ -67,7 +70,7 @@ final class AppModel: ObservableObject {
     @Published var externalAIConsent = false {
         didSet { UserDefaults.standard.set(externalAIConsent, forKey: "external_ai_consent:" + namespace) }
     }
-    let api = APIClient()
+    let api: APIClient
     let responses: ResponsesClient
     let health = HealthManager()
     let reminders = ReminderManager()
@@ -85,13 +88,16 @@ final class AppModel: ObservableObject {
     private var syncRequested = false
     private var followingToday = true
     private var reloadToken = UUID()
+    private var loadedRecordsRevision: LocalRecordsRevision?
     private var summaryToken = UUID()
     private let thumbnailCache = NSCache<NSString, NSData>()
     var deviceId: String
 
     // MARK: - 创建当前本地身份的存储及服务回调
 
-    init(responses: ResponsesClient = ResponsesClient(), cloudServerURL: URL? = CloudDeployment.serverURL) {
+    init(responses: ResponsesClient = ResponsesClient(), cloudServerURL: URL? = CloudDeployment.serverURL,
+         api: APIClient = APIClient()) {
+        self.api = api
         self.responses = responses
         self.officialCloudURL = cloudServerURL
         let savedURL = UserDefaults.standard.string(forKey: "server_url") ?? ""
@@ -199,6 +205,7 @@ final class AppModel: ObservableObject {
                 Task { @MainActor in
                     guard let self, self.session != nil else { return }
                     try? await self.processPendingDeletion()
+                    if self.cloudAIRevocationPending { await self.refreshCloudAccount() }
                     if self.syncEnabled { await self.sync() }
                     await self.resumePendingRecognition()
                 }
@@ -229,33 +236,62 @@ final class AppModel: ObservableObject {
     func reload() async {
         let token = UUID()
         let context = localDataContext
+        let previousRevision = loadedRecordsRevision
+        let previousRows = records
+        let previousIndex = recordIndex
         reloadToken = token
         do {
             let store = try requireStore()
-            let rows = try await store.allRecords()
-            let prepared = await Task.detached(priority: .userInitiated) { RecordIndex(records: rows) }.value
-            guard reloadToken == token else { return }
-            records = rows
-            recordIndex = prepared
-            activeProfile = prepared.currentProfile()
+            let changes = try await store.recordChanges(since: previousRevision)
+            let count = try await store.pendingCount()
+            guard reloadToken == token, context == localDataContext, store === self.store else { return }
+            // 队列、诊断和云端状态变化不重新读取或发布全部业务记录。
+            if changes.isEmpty {
+                loadedRecordsRevision = changes.revision
+                if pendingCount != count { pendingCount = count }
+                let currentProfile = recordIndex.currentProfile()
+                if activeProfile != currentProfile { activeProfile = currentProfile }
+                await refreshSelectedSummary()
+                return
+            }
+            let prepared = await Task.detached(priority: .userInitiated) { () -> (rows: [AppRecord], index: RecordIndex, changed: Bool) in
+                if changes.replacesAll {
+                    return (changes.records, RecordIndex(records: changes.records), true)
+                }
+                let ids = Set(changes.records.map(\.id)).union(changes.removedIds)
+                let replaced = previousRows.filter { ids.contains($0.id) }
+                let oldValues = Dictionary(uniqueKeysWithValues: replaced.map { ($0.id, $0) })
+                let changed = !changes.removedIds.isDisjoint(with: oldValues.keys)
+                    || changes.records.contains { oldValues[$0.id] != $0 }
+                guard changed else { return (previousRows, previousIndex, false) }
+                return (RecordIndex.merging(previousRows, updates: changes.records, removing: ids),
+                        previousIndex.replacing(replaced, with: changes.records), true)
+            }.value
+            guard reloadToken == token, context == localDataContext, store === self.store else { return }
+            loadedRecordsRevision = changes.revision
+            if prepared.changed {
+                records = prepared.rows
+                recordIndex = prepared.index
+                dataRevision += 1
+            }
+            activeProfile = prepared.index.currentProfile()
             if profileSetupNamespace != namespace {
                 profileSetupNamespace = namespace
                 let today = TimeFormat.day(timezone: activeProfile.timezone, startMinutes: activeProfile.dayStartMinutes)
                 profileSetupCompleted = UserDefaults.standard.bool(forKey: "body_setup_completed:" + namespace)
-                    || OnboardingInput.isComplete(profile: activeProfile, weight: EnergyCalculator.weight(prepared.forSummary(day: today), day: today))
+                    || OnboardingInput.isComplete(profile: activeProfile, weight: EnergyCalculator.weight(prepared.index.forSummary(day: today), day: today))
             }
             hasLoadedRecords = true
             // 只迁移一次旧版档案单位；后续同步、换账号都不覆盖本机选择。
-            if UserDefaults.standard.string(forKey: Self.weightUnitPreferenceKey) == nil, !prepared.profiles.isEmpty {
+            if UserDefaults.standard.string(forKey: Self.weightUnitPreferenceKey) == nil, !prepared.index.profiles.isEmpty {
                 setWeightUnit(WeightUnit(rawValue: activeProfile.weightUnit) ?? .kg)
             }
-            dataRevision += 1
-            let count = try await store.pendingCount()
-            guard reloadToken == token, context == localDataContext else { return }
-            pendingCount = count
+            if pendingCount != count { pendingCount = count }
             // 冲突列表由状态页按游标读取，不在全局刷新中加载全部冲突。
             await refreshSelectedSummary()
+            guard reloadToken == token, context == localDataContext else { return }
             publishWatchContext()
+            if prepared.changed { scheduleLocalBackup() }
         } catch { if context == localDataContext { errorMessage = error.localizedDescription } }
     }
 
@@ -293,7 +329,7 @@ final class AppModel: ObservableObject {
         let context = localDataContext
         let store = try requireStore()
         let sourceDevice = deviceId
-        let statusRecord = record.kind == "meal" ? records.first {
+        let statusRecord = record.kind == "meal" ? recordIndex.byDay[record.businessDate]?.first {
             $0.kind == "daily_status" && $0.businessDate == record.businessDate && $0.deletedAt == nil
         } : nil
         try await store.save(record, deviceId: sourceDevice, expectedPayload: expectedPayload)
@@ -699,6 +735,7 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(namespace, forKey: "namespace:" + bindingKey)
         session = credentials
         records = []
+        loadedRecordsRevision = nil
         recordIndex = RecordIndex(records: [])
         activeProfile = BodyProfile()
         selectedSummary = DailySummary(day: TimeFormat.day())
@@ -752,6 +789,7 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(candidate, forKey: "anonymous_namespace")
         UserDefaults.standard.set(candidate, forKey: "local_namespace")
         records = []
+        loadedRecordsRevision = nil
         recordIndex = RecordIndex(records: [])
         activeProfile = BodyProfile()
         selectedSummary = DailySummary(day: TimeFormat.day())
@@ -786,6 +824,15 @@ final class AppModel: ObservableObject {
             let result = try await operation.value
             guard context == syncContext else { return }
             syncOperation = nil
+            if result.needsContinuation {
+                if result.downloaded > 0 {
+                    await reload()
+                    guard context == syncContext else { return }
+                }
+                syncRequested = true
+                syncStatus = "积压数据正在分批同步"
+                return
+            }
             if result.failed > 0 { syncStatus = "\(result.failed) 条记录同步失败，可在同步状态中查看并重试" }
             else if result.conflicts > 0 { syncStatus = "有 \(result.conflicts) 条记录需要合并" }
             else { syncStatus = "已同步 · \(Date().formatted(date: .omitted, time: .shortened))" }
@@ -1145,16 +1192,20 @@ final class AppModel: ObservableObject {
     // MARK: - 伙伴、待执行命令与冲突处理
 
     func refreshChallenges() async throws {
-        challenges = try await api.send("challenges").array?.compactMap(\.object) ?? []
+        let context = localDataContext
+        let list = try await api.send("challenges").array?.compactMap(\.object) ?? []
+        try checkLocalContext(context)
+        challenges = list
     }
 
     func queueCommand(path: String, method: String = "POST", body: JSONObject = [:], priority: Int = 0) async throws {
-        try await requireStore().enqueueCommand(path: path, method: method, body: body, priority: priority)
-        notice = priority > 0 ? "本机已停止共享，服务器确认前仍可能按旧授权提供数据" : "已加入待发送队列"
-        if priority > 0 {
-            let store = try requireStore()
-            for key in try await store.metadataPrefix("shared_summary:").keys { try await store.setMetadata(key, value: nil) }
-        }
+        let context = localDataContext
+        let store = try requireStore()
+        try await store.enqueueCommand(path: path, method: method, body: body, priority: priority)
+        try checkLocalContext(context)
+        notice = priority > 0 ? "操作已排队，服务器确认前仍可能按旧授权提供数据" : "已加入待发送队列"
+        if priority > 0 { try await store.clearSharedSummaries() }
+        try checkLocalContext(context)
         scheduleSync()
     }
 
@@ -1216,12 +1267,21 @@ extension AppModel {
     var canUseAI: Bool {
         guard !changingAccount, !deletionPending else { return false }
         if !isCloudMode { return serverURL.isEmpty || deploymentChecked || serverDeploymentMode == "private" }
-        return cloudServerSelected && cloudReady && session != nil && entitlements.flag("ai_food_recognition")
-            && ProcessInfo.processInfo.systemUptime < entitlementLeaseUntil
+        return cloudServerSelected && cloudReady && cloudAccessError == nil && session != nil && entitlements.flag("ai_food_recognition")
+            && ProcessInfo.processInfo.systemUptime < entitlementLeaseUntil && !cloudAIRevocationPending
+    }
+    private var cloudRevocationScope: String? {
+        guard let session else { return nil }
+        return CloudAIRevocationStore.scope(server: serverURL, instance: session.instanceId, user: session.userId)
+    }
+    var cloudAIRevocationPending: Bool {
+        guard let scope = cloudRevocationScope else { return false }
+        return cloudRevocations.pendingToken(for: scope) != nil
     }
     var aiAccessMessage: String {
         if !isCloudMode { return "按已保存的私有 AI 配置使用" }
         if session == nil { return "登录云账号后，有效 SVIP 可使用 AI 识图" }
+        if cloudAIRevocationPending { return "本机已停止新识别，照片处理授权撤回正在等待服务器确认" }
         if let cloudAccessError { return cloudAccessError }
         if canUseAI { return "SVIP 已生效，识别仍需单独同意外部照片处理" }
         return "AI 识图仅向有效 SVIP 开放，基础记录与同步仍可使用"
@@ -1320,22 +1380,29 @@ extension AppModel {
             let rights = try await api.send("me/entitlements").object ?? [:]
             try checkLocalContext(context)
             guard cloudRefreshID == requestID else { return }
-            let consent = try await api.send("me/ai-consent").object ?? [:]
+            var consent = try await api.send("me/ai-consent").object ?? [:]
             try checkLocalContext(context)
             guard cloudRefreshID == requestID else { return }
+            if let scope = cloudRevocationScope, let token = cloudRevocations.pendingToken(for: scope) {
+                consent = try await confirmCloudAIRevocation(scope: scope, token: token, context: context)
+                try checkLocalContext(context)
+                guard cloudRefreshID == requestID else { return }
+            }
             var preferences: JSONObject = [:]
+            var providerError: String?
             if rights.flag("ai_food_recognition") {
-                preferences = try await api.send("me/ai-preferences").object ?? [:]
+                do { preferences = try await api.send("me/ai-preferences").object ?? [:] }
+                catch let error as APIError where error.code == "AI_UNAVAILABLE" { providerError = error.localizedDescription }
             }
             try checkLocalContext(context)
             guard cloudRefreshID == requestID, serverURL == address,
                   session?.userId == activeSession.userId, session?.instanceId == activeSession.instanceId else { return }
             cloudAccount = account
             entitlements = rights
-            cloudConsent = consent
+            cloudConsent = cloudRevocationScope.map { cloudRevocations.applyingLocalDenial(to: consent, scope: $0) } ?? consent
             cloudAI = preferences
             entitlementLeaseUntil = ProcessInfo.processInfo.systemUptime + CloudEntitlementLease.duration(rights)
-            cloudAccessError = nil
+            cloudAccessError = providerError
         } catch {
             guard context == localDataContext, cloudRefreshID == requestID, serverURL == address else { return }
             entitlementLeaseUntil = 0
@@ -1357,23 +1424,74 @@ extension AppModel {
     func setCloudAIConsent(_ allowed: Bool) async throws {
         let context = localDataContext
         guard isCloudMode, session != nil else { throw APIError(code: "AUTH_REQUIRED", message: "请先登录云账号") }
-        if allowed { try await requireCloudAI() }
+        if allowed {
+            guard !cloudAIRevocationPending else {
+                throw APIError(code: "AI_REVOCATION_PENDING", message: "请先联网确认撤回，再重新授权照片处理")
+            }
+            try await requireCloudAI()
+        }
         try checkLocalContext(context)
+        cloudRefreshID = UUID()
+        let intentID = UUID()
+        cloudConsentIntentID = intentID
         let revision = cloudConsent.number("provider_revision") ?? cloudAI.number("provider_revision") ?? 0
-        // 本机先停止新提交；服务器未确认时不声称已经停止外部处理。
+        let consentRevision = cloudConsent.number("revision") ?? 0
+        guard let scope = cloudRevocationScope else { throw APIError(code: "AUTH_REQUIRED", message: "请先登录云账号") }
+        // 重启、重新登录和网络恢复都必须保留撤回意图，直到同一身份的服务端确认。
+        let token = allowed ? nil : cloudRevocations.request(for: scope)
         if !allowed { cloudConsent["allowed"] = .bool(false) }
         do {
-            let result = try await api.send("me/ai-consent", method: "PUT", body: [
-                "allowed": .bool(allowed), "provider_revision": .number(revision)
-            ]).object ?? [:]
+            let result: JSONObject
+            if let token {
+                result = try await confirmCloudAIRevocation(scope: scope, token: token, context: context)
+            } else {
+                let apiContext = await api.requestContext()
+                try checkLocalContext(context)
+                guard cloudConsentGrants[scope] == nil, !cloudAIRevocationPending else {
+                    throw APIError(code: "AI_CONSENT_BUSY", message: "照片授权操作仍在处理，请稍后重试")
+                }
+                let task = Task { @MainActor in
+                    try await self.api.send("me/ai-consent", method: "PUT", body: [
+                        "allowed": .bool(true), "provider_revision": .number(revision),
+                        "expected_revision": .number(consentRevision)
+                    ], expectedContext: apiContext).object ?? [:]
+                }
+                cloudConsentGrants[scope] = task
+                defer { cloudConsentGrants.removeValue(forKey: scope) }
+                result = try await task.value
+            }
             try checkLocalContext(context)
-            cloudConsent = result
+            guard cloudConsentIntentID == intentID else { return }
+            cloudRefreshID = UUID()
+            cloudConsent = cloudRevocations.applyingLocalDenial(to: result, scope: scope)
         } catch {
             if !allowed, context == localDataContext {
                 notice = "本机已停止新识别，撤回尚未获服务器确认，请联网后重试"
             }
             throw error
         }
+    }
+
+    private func confirmCloudAIRevocation(scope: String, token: String, context: UUID) async throws -> JSONObject {
+        try checkLocalContext(context)
+        guard scope == cloudRevocationScope else { throw CancellationError() }
+        // 若之前的授权仍在途，先等其结束，再发撤回，避免网络乱序重新开启服务端授权。
+        if let grant = cloudConsentGrants[scope] {
+            _ = try? await grant.value
+            try checkLocalContext(context)
+            guard scope == cloudRevocationScope else { throw CancellationError() }
+        }
+        let apiContext = await api.requestContext()
+        try checkLocalContext(context)
+        let result = try await api.send("me/ai-consent", method: "PUT", body: [
+            "allowed": .bool(false), "provider_revision": .number(0)
+        ], expectedContext: apiContext).object ?? [:]
+        try checkLocalContext(context)
+        guard scope == cloudRevocationScope, result["allowed"] == .bool(false), result.number("revision") != nil else {
+            throw APIError(code: "AI_REVOCATION_PENDING", message: "服务器尚未确认撤回，已继续禁止本机新识别")
+        }
+        cloudRevocations.acknowledge(scope: scope, token: token)
+        return cloudRevocations.applyingLocalDenial(to: result, scope: scope)
     }
 
     func selectCloudAIModel(_ modelID: String) async throws {
@@ -1398,7 +1516,10 @@ extension AppModel {
     }
 
     func authenticateCloud(email: String, password: String, displayName: String, emailCode: String,
-                           register: Bool, mergeLocal: Bool) async throws {
+                           register: Bool, mergeLocal: Bool, acceptedRulesVersion: String?) async throws {
+        if register && acceptedRulesVersion != "1" {
+            throw APIError(code: "CLOUD_RULES_REQUIRED", message: "请先确认云账号与同步规则")
+        }
         try await prepareCloudAuthentication()
         await stopBackgroundWork()
         defer { changingAccount = false }
@@ -1406,12 +1527,14 @@ extension AppModel {
         let context = localDataContext
         let address = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let deviceKey = "device:" + serverURL + ":" + address
-        let accountDevice = UserDefaults.standard.string(forKey: deviceKey) ?? UUID().uuidString.lowercased()
+        // 注册是经过邮箱验证的新账号操作，不复用同邮箱过去属于其他账号的设备标识。
+        let accountDevice = register ? UUID().uuidString.lowercased()
+            : UserDefaults.standard.string(forKey: deviceKey) ?? UUID().uuidString.lowercased()
         do {
             let credentials: SessionCredentials
-            if register {
+            if register, let acceptedRulesVersion {
                 credentials = try await api.registerCloud(email: address, password: password, name: displayName,
-                                                          code: emailCode, deviceId: accountDevice)
+                                                          code: emailCode, deviceId: accountDevice, rulesVersion: acceptedRulesVersion)
             } else {
                 credentials = try await api.login(username: address, password: password, deviceId: accountDevice, name: UIDevice.current.name)
             }
@@ -1429,6 +1552,47 @@ extension AppModel {
             "email": .string(email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()),
             "email_code": .string(code), "new_password": .string(newPassword)
         ], authenticated: false)
+    }
+
+    func sendCloudDeviceRecoveryCode(email: String, password: String) async throws {
+        try await prepareCloudAuthentication()
+        let address = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let previous = UserDefaults.standard.string(forKey: "device:" + serverURL + ":" + address) else {
+            throw APIError(code: "DEVICE_RECOVERY_NOT_REQUIRED", message: "没有需要重新登记的本机设备，请使用正常登录")
+        }
+        _ = try await api.send("auth/device-recovery-code", method: "POST", body: [
+            "username": .string(address), "password": .string(password), "previous_device_id": .string(previous)
+        ], authenticated: false)
+    }
+
+    func recoverCloudDevice(email: String, password: String, code: String, mergeLocal: Bool) async throws {
+        try await prepareCloudAuthentication()
+        let address = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let previous = UserDefaults.standard.string(forKey: "device:" + serverURL + ":" + address) else {
+            throw APIError(code: "DEVICE_RECOVERY_NOT_REQUIRED", message: "没有需要重新登记的本机设备，请使用正常登录")
+        }
+        await stopBackgroundWork()
+        defer { changingAccount = false }
+        session = nil
+        let context = localDataContext
+        await api.clearSession()
+        let apiContext = await api.requestContext()
+        do {
+            let response = try await api.send("auth/recover-device", method: "POST", body: [
+                "username": .string(address), "password": .string(password), "email_code": .string(code),
+                "previous_device_id": .string(previous), "device_id": .string(UUID().uuidString.lowercased()),
+                "device_name": .string(UIDevice.current.name)
+            ], authenticated: false, expectedContext: apiContext)
+            try checkLocalContext(context)
+            guard let value = response.object else { throw APIError(code: "INVALID_RESPONSE", message: "设备登记响应无效") }
+            let credentials = try Codec.decode(SessionCredentials.self, from: value)
+            try await api.setSession(credentials)
+            try checkLocalContext(context)
+            try await finishAuthentication(credentials, loginName: address, mergeLocal: mergeLocal)
+        } catch {
+            if context == localDataContext, session == nil { await api.clearSession() }
+            throw error
+        }
     }
 
     func changeCloudPassword(currentPassword: String, newPassword: String) async throws {

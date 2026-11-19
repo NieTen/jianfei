@@ -272,6 +272,8 @@ class DataService:
             for export in export_tasks:
                 (self.settings.data_dir / "exports" / (export["id"] + ".bjar")).unlink(missing_ok=True)
                 (self.settings.data_dir / "exports" / (export["id"] + ".csv")).unlink(missing_ok=True)
+            repo.delete("share_grants", {"owner_id": user_id})
+            repo.delete("share_grants", {"recipient_id": user_id})
             memberships = repo.find("members", {"user_id": user_id})
             for member in memberships:
                 repo.update("challenges", {"status": "ended_early", "finalized_at": now_iso()}, {"id": member["challenge_id"]})

@@ -196,6 +196,27 @@ final class RecordingFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testUnchangedReloadDoesNotRepublishTheBusinessSnapshot() async throws {
+        try await isolated { model in
+            await model.reload()
+            let store = try model.requireStore()
+            let initial = model.dataRevision
+            try await store.log("不改变业务记录的诊断")
+            try await store.setMetadata("last_sync", value: "fixture-sync")
+            await model.reload()
+            XCTAssertEqual(model.dataRevision, initial)
+            let record = try AppRecord(kind: "weight", day: "2026-11-19", value: WeightEntry(weightKg: 70))
+            try await model.saveRecord(record)
+            XCTAssertEqual(model.dataRevision, initial + 1)
+            XCTAssertEqual(model.pendingCount, 1)
+            await model.reload()
+            XCTAssertEqual(model.dataRevision, initial + 1)
+            XCTAssertEqual(model.recordIndex.byKind["weight"]?.map(\.id), [record.id])
+            XCTAssertEqual(model.records.map(\.id), [record.id])
+        }
+    }
+
+    @MainActor
     private func isolated(_ action: (AppModel) async throws -> Void) async throws {
         let defaults = UserDefaults.standard
         let keys = ["local_namespace", "anonymous_namespace", "setup_completed", "sync_enabled", "health_enabled",
@@ -223,6 +244,8 @@ final class RecordingFlowTests: XCTestCase {
                 KeychainStore.delete("active_session")
             }
         }
-        try await action(AppModel())
+        let model = AppModel()
+        try await model.requireStore().setMetadata("automatic_backup", value: "off")
+        try await action(model)
     }
 }

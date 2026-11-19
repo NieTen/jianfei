@@ -6,6 +6,38 @@ import XCTest
 
 final class AppearanceTests: XCTestCase {
     @MainActor
+    func testCloudLoginAndBasicRecordingPagesRenderWithoutExternalServices() async throws {
+        let defaults = UserDefaults.standard
+        let keys = ["local_namespace", "server_url", "sync_enabled", "health_enabled", AppModel.weightUnitPreferenceKey]
+        let previous = keys.map { defaults.object(forKey: $0) }
+        defaults.set("cloud-appearance-" + UUID().uuidString.lowercased(), forKey: "local_namespace")
+        defaults.set("https://offline-fixture.invalid", forKey: "server_url")
+        defaults.set(false, forKey: "sync_enabled")
+        defaults.set(false, forKey: "health_enabled")
+        defer { for (key, value) in zip(keys, previous) { defaults.set(value, forKey: key) } }
+        let cloud = try XCTUnwrap(URL(string: "https://cloud-fixture.invalid"))
+        let model = AppModel(cloudServerURL: cloud)
+        // 只呈现已选择云地址的离线页面，不持久化此地址；刷新入口会在发送网络请求前退出。
+        model.serverURL = cloud.absoluteString
+        try await model.requireStore().setMetadata("automatic_backup", value: "off")
+        model.setupCompleted = true
+        try await seedRecords(model)
+        XCTAssertTrue(model.isCloudMode)
+        XCTAssertTrue(model.cloudServerConfigured)
+        XCTAssertTrue(model.cloudServerSelected)
+        XCTAssertFalse(model.canUseAI)
+        for dark in [false, true] {
+            try await capture(NavigationStack { CloudAccountView() }, model: model,
+                              name: "cloud-login-\(dark ? "dark" : "light")", dark: dark)
+        }
+        try await capture(NavigationStack { CloudAccountView() }, model: model,
+                          name: "cloud-login-large-text", largeText: true)
+        try await capture(NavigationStack { SettingsView() }, model: model, name: "cloud-basic-settings")
+        try await capture(NavigationStack { MealEditorView() }, model: model, name: "cloud-basic-meal")
+        XCTAssertFalse(model.canUseAI, "页面展示不能自行开放无权益账号的AI")
+    }
+
+    @MainActor
     func testTabContainerPreservesStateAndForwardsPageLifecycle() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previousWindow = scene.windows.first(where: \.isKeyWindow)

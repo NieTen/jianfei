@@ -9,6 +9,8 @@ struct CloudAccountView: View {
     @State private var displayName = ""
     @State private var emailCode = ""
     @State private var mergeLocal = false
+    @State private var acceptedRules = false
+    @State private var localSummary = ""
     @State private var currentPassword = ""
     @State private var newPassword = ""
     @State private var newEmail = ""
@@ -19,6 +21,8 @@ struct CloudAccountView: View {
     @State private var message = ""
     @State private var error: String?
     @State private var confirmLogoutAll = false
+    @State private var deviceRecoveryNeeded = false
+    @State private var deviceEmailCode = ""
 
     private var emailInput: String { email.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var newEmailInput: String { newEmail.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -52,6 +56,15 @@ struct CloudAccountView: View {
         .task {
             if model.isCloudMode { await model.refreshCloudAccount() }
         }
+        .task(id: model.localDataContext) {
+            let context = model.localDataContext
+            localSummary = ""
+            mergeLocal = false
+            guard model.session == nil, let store = model.store,
+                  let summary = try? await store.recoverySummary(), !summary.flag("bound"),
+                  let count = summary.number("record_count"), count > 0, context == model.localDataContext else { return }
+            localSummary = "本机有 \(Int(count)) 条未绑定记录，日期从 \(summary.text("first_day")) 到 \(summary.text("last_day"))。"
+        }
         .onChange(of: model.localDataContext) { _, _ in
             // 登录、退出和切换官方服务本身会更换上下文，保留该次操作的错误回显。
             guard !(busy && changingIdentity) else { return }
@@ -71,7 +84,11 @@ struct CloudAccountView: View {
             message = ""
             error = nil
             confirmLogoutAll = false
+            deviceRecoveryNeeded = false
+            deviceEmailCode = ""
         }
+        .onChange(of: email) { _, _ in deviceRecoveryNeeded = false; deviceEmailCode = "" }
+        .onChange(of: mode) { _, _ in acceptedRules = false; deviceRecoveryNeeded = false; deviceEmailCode = "" }
         .alert("账号操作未完成", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("知道了", role: .cancel) {}
         } message: { Text(error ?? "") }
@@ -118,7 +135,13 @@ struct CloudAccountView: View {
                     }
                 }.disabled(emailInput.isEmpty)
             }
-            if mode != "reset" {
+            if mode == "register" {
+                Text("云账号使用邮箱登录和找回密码。记录先保存到本机，开启个人同步后才上传；餐食照片同步、伙伴共享、AI 处理照片分别设置。你可以在数据管理中导出或删除自己的数据。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Toggle("我已阅读并同意云账号与同步规则", isOn: $acceptedRules)
+            }
+            if mode != "reset", !localSummary.isEmpty {
+                Text(localSummary).font(.footnote)
                 Toggle("将当前未绑定的离线记录关联到此账号", isOn: $mergeLocal)
                 Text("仅在确定这些离线记录属于此账号时开启。其他账号的本机记录不会自动合并。")
                     .font(.caption).foregroundStyle(.secondary)
@@ -126,7 +149,27 @@ struct CloudAccountView: View {
             Button(mode == "register" ? "注册并登录" : mode == "reset" ? "重设密码" : "登录") {
                 authenticate()
             }.buttonStyle(FilledActionStyle())
-                .disabled(emailInput.isEmpty || password.isEmpty || (mode != "login" && emailCode.isEmpty))
+                .disabled(emailInput.isEmpty || password.isEmpty || (mode != "login" && emailCode.isEmpty) || (mode == "register" && !acceptedRules))
+            if mode == "login" && deviceRecoveryNeeded {
+                Text("此安装保存的设备登记已失效。只有你确认要再次使用这台设备时，才通过账号邮箱验证并重新登记；原设备的撤销记录会保留。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("发送设备重新登记验证码") {
+                    let destination = emailInput, enteredPassword = password
+                    run(success: { message = "设备验证码请求已受理，请查看账号已验证的邮箱。" }) {
+                        try await model.sendCloudDeviceRecoveryCode(email: destination, password: enteredPassword)
+                    }
+                }.disabled(emailInput.isEmpty || password.isEmpty)
+                FormField(title: "设备重新登记验证码") {
+                    TextField("请输入邮箱验证码", text: $deviceEmailCode).textContentType(.oneTimeCode)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
+                Button("验证邮箱并重新登记此设备") {
+                    let destination = emailInput, enteredPassword = password, code = deviceEmailCode, merge = mergeLocal
+                    run(changesIdentity: true, success: { deviceRecoveryNeeded = false; deviceEmailCode = "" }) {
+                        try await model.recoverCloudDevice(email: destination, password: enteredPassword, code: code, mergeLocal: merge)
+                    }
+                }.disabled(emailInput.isEmpty || password.isEmpty || deviceEmailCode.isEmpty)
+            }
             if mode == "reset" {
                 Button("返回登录") { mode = "login"; password = ""; emailCode = ""; message = "" }
             } else {
@@ -166,11 +209,13 @@ struct CloudAccountView: View {
             Text(model.syncStatus).font(.caption).foregroundStyle(.secondary)
             Button("立即同步") { run { await model.sync() } }.disabled(busy || !model.syncEnabled)
         }
-        if model.cloudConsent.flag("allowed") {
+        if model.cloudConsent.flag("allowed") || model.cloudAIRevocationPending {
             Section("照片处理授权") {
-                Text("你已允许当前披露的 AI 处理方接收所选照片。撤回后不再提交新的外部识别。")
+                Text(model.cloudAIRevocationPending
+                     ? "本机已停止新的 AI 识别，撤回请求尚待服务器确认。联网刷新账号时会自动重试；确认前不能重新授权。"
+                     : "你已允许当前披露的 AI 处理方接收所选照片。撤回后不再提交新的外部识别。")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("撤回照片处理授权", role: .destructive) {
+                Button(model.cloudAIRevocationPending ? "重试撤回照片处理授权" : "撤回照片处理授权", role: .destructive) {
                     run(success: { message = "照片处理授权已撤回。" }) {
                         try await model.setCloudAIConsent(false)
                     }
@@ -216,6 +261,7 @@ struct CloudAccountView: View {
     private func authenticate() {
         let destination = emailInput, enteredPassword = password, code = emailCode
         let registering = mode == "register", resetting = mode == "reset"
+        let rulesVersion = registering && acceptedRules ? "1" : nil
         let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines), merge = mergeLocal
         run(changesIdentity: true, success: {
             password = ""
@@ -225,8 +271,14 @@ struct CloudAccountView: View {
             if resetting {
                 try await model.resetCloudPassword(email: destination, code: code, newPassword: enteredPassword)
             } else {
-                try await model.authenticateCloud(email: destination, password: enteredPassword, displayName: name,
-                                                  emailCode: code, register: registering, mergeLocal: merge)
+                do {
+                    try await model.authenticateCloud(email: destination, password: enteredPassword, displayName: name,
+                                                      emailCode: code, register: registering, mergeLocal: merge,
+                                                      acceptedRulesVersion: rulesVersion)
+                } catch let error as APIError where !registering && ["DEVICE_REVOKED", "DEVICE_OWNER_CONFLICT"].contains(error.code) {
+                    deviceRecoveryNeeded = true
+                    throw error
+                }
             }
         }
     }

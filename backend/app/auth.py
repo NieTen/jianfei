@@ -25,9 +25,9 @@ class AuthService:
     def issue_session(self, repo, user, device_id, device_name, family_id=None, parent_id=None):
         device = repo.one("devices", {"id": device_id})
         if device and device["user_id"] != user["id"]:
-            raise AppError("DEVICE_OWNER_CONFLICT", "设备标识已属于其他账号，请为当前账号注册新设备", 409)
+            raise AppError("DEVICE_OWNER_CONFLICT", "当前设备登记属于其他账号，请验证身份后重新登记", 409)
         if device and device["revoked_at"]:
-            raise AppError("DEVICE_REVOKED", "该设备已被撤销，请使用新的设备注册标识", 403)
+            raise AppError("DEVICE_REVOKED", "该设备已被撤销，请验证身份后重新登记", 403)
         if device is None:
             repo.insert("devices", {
                 "id": device_id, "user_id": user["id"], "name": device_name,
@@ -72,6 +72,8 @@ class AuthService:
                 repo.insert("users", user)
                 result = self.issue_session(repo, user, request.device_id, request.device_name)
                 repo.audit(user["id"], "account_created", user["id"])
+                if self.settings.deployment_mode == "cloud" and request.cloud_rules_version:
+                    repo.audit(user["id"], "cloud_rules_acknowledged", request.cloud_rules_version)
                 result["recovery_code"] = recovery
                 return result
         except sqlite3.IntegrityError:
@@ -108,6 +110,44 @@ class AuthService:
                     repo.insert("auth_rate_limits", values)
         if exceeded:
             raise AppError("ACCOUNT_RATE_LIMITED", "账号操作过于频繁，请稍后重试", 429)
+
+    def device_recovery_user(self, repo, request):
+        login = request.username.strip().lower()
+        user = repo.one("users", {"email" if "@" in login else "username": login, "status": "active"})
+        valid = verify_password(request.password, user["password_hash"] if user else self.dummy_password_hash)
+        if not user or not valid:
+            raise AppError("INVALID_CREDENTIALS", "账号或密码错误", 401)
+        previous = repo.one("devices", {"id": request.previous_device_id})
+        if not previous or (previous["user_id"] == user["id"] and not previous["revoked_at"]):
+            raise AppError("DEVICE_RECOVERY_NOT_REQUIRED", "此设备无需重新登记，请使用正常登录", 409)
+        if not user["email"] or not user["email_verified_at"]:
+            raise AppError("VERIFIED_EMAIL_REQUIRED", "账号尚未绑定验证邮箱，请先在可信设备上绑定邮箱后重新登记", 403)
+        return user
+
+    def device_recovery_code(self, request):
+        self.limit_attempt(request.username.strip().lower(), "device_recovery", 10)
+        with self.db.read() as repo:
+            user = self.device_recovery_user(repo, request)
+        # 使用独立验证码用途；普通找回密码或注册验证码不能用来恢复设备。
+        return self.email.issue(user["email"], "device_recovery", user["id"])
+
+    def recover_device(self, request):
+        self.limit_attempt(request.username.strip().lower(), "device_recovery", 10)
+        with self.db.read() as repo:
+            user = self.device_recovery_user(repo, request)
+            if request.device_id == request.previous_device_id or repo.one("devices", {"id": request.device_id}):
+                raise AppError("DEVICE_ID_REQUIRED", "重新登记必须使用全新的设备标识", 409)
+        challenge = self.email.consume(user["email"], "device_recovery", request.email_code, user["id"])
+        with self.db.transaction() as repo:
+            current = self.device_recovery_user(repo, request)
+            if current["id"] != challenge["user_id"] or current["email"] != challenge["email"]:
+                raise AppError("INVALID_EMAIL_CODE", "账号或邮箱已变化，请重新验证", 403)
+            if repo.one("devices", {"id": request.device_id}):
+                raise AppError("DEVICE_ID_REQUIRED", "设备标识已使用，请重新登记", 409)
+            result = self.issue_session(repo, current, request.device_id, request.device_name)
+            # 原设备及其撤销记录保持不变，审计只记录标识，不保存口令或验证码。
+            repo.audit(current["id"], "device_reregistered", request.previous_device_id)
+            return result
 
     def authenticate(self, authorization):
         if not authorization or not authorization.startswith("Bearer "):

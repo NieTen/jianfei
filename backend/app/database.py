@@ -182,9 +182,11 @@ class Database:
                     repo.insert("settings", {"key": key, "value": str(uuid.uuid4())})
 
     @contextmanager
-    def read(self):
+    def read(self, snapshot=False):
         connection = self.connect()
         try:
+            if snapshot:
+                connection.execute("BEGIN")
             yield Repository(connection, self.columns)
         finally:
             connection.close()

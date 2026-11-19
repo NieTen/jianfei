@@ -35,6 +35,8 @@ def replay_deletions(service, events):
                 else:
                     repo.insert("entity_ledger", {**key, "deleted": 1, "created_change_id": event["id"]})
             elif event["action"] in ("all_data", "account"):
+                repo.delete("share_grants", {"owner_id": user["id"]})
+                repo.delete("share_grants", {"recipient_id": user["id"]})
                 for table in ("entities", "changes", "receipts", "scores", "score_events", "snapshots", "ai_settings", "tasks", "notifications", "cloud_ai_preferences", "cloud_ai_consents"):
                     repo.delete(table, {"user_id": user["id"]})
                 repo.update("media", {"status": "deleted"}, {"user_id": user["id"]})
@@ -56,6 +58,8 @@ def replay_deletions(service, events):
                     repo.update("ai_usage", {"status": "released", "updated_at": now_iso()}, {"user_id": user["id"], "status": "reserved"})
             if not repo.one("deletion_ledger", {"id": event["id"]}):
                 repo.insert("deletion_ledger", event)
+        repo.update("share_grants", {"revoked_at": now_iso()}, {"revoked_at": None})
+        repo.update("invites", {"revoked": 1}, {"revoked": 0})
         repo.update("settings", {"value": str(uuid.uuid4())}, {"key": "sync_epoch"})
         repo.update("sessions", {"revoked_at": now_iso(), "revoked_reason": "restore"}, {"revoked_at": None})
         repo.update("consents", {"scopes": "[]", "revoked_at": now_iso(), "updated_at": now_iso()}, {"revoked_at": None})
@@ -64,7 +68,10 @@ def replay_deletions(service, events):
 def restore(service, source, password, object_directory=None):
     work = service.settings.data_dir / "tmp" / ("restore-" + str(uuid.uuid4()))
     try:
-        service.maintenance.unpack_backup(source, password, work, object_directory)
+        manifest = service.maintenance.unpack_backup(source, password, work, object_directory)
+        expected_ledger = manifest.get("deletion_ledger_id")
+        if expected_ledger and expected_ledger != service.db.deletion_journal.replica_id:
+            raise ValueError("此备份需要其原始独立删除账本，请挂载匹配的副本目录后恢复")
         events = service.maintenance.deletion_events()
         with service.db.read() as repo:
             has_users = bool(repo.find("users", limit=1))
@@ -182,10 +189,16 @@ def main():
         print(service.auth.create_enrollment())
         return
     if args.command == "status":
+        ai_status = service.providers.operational_status()
         with service.db.read() as repo:
             print(json.dumps({"instance_id": repo.setting("instance_id"),
                               "last_backup": json.loads(repo.setting("last_backup") or "null"),
-                              "ai_configured": bool(service.settings.ai_url),
+                              "backup_replica_configured": bool(service.settings.backup_replica_dir),
+                              "backup_replica_required": service.settings.backup_replica_required,
+                              "ai_configured": ai_status["configured"],
+                              "ai_enabled": ai_status["enabled"],
+                              "ai_configuration_source": ai_status["source"],
+                              "ai_provider_revision": ai_status["revision"],
                               "apns_configured": service.push.configured()}, ensure_ascii=False, indent=2))
         return
     try:

@@ -75,10 +75,16 @@ enum Codec {
 }
 
 enum TimeFormat {
-    static func iso(_ date: Date = Date()) -> String {
+    // 解码旧记录时，Swift 也会计算模型字段的默认时间。复用同一格式器并串行访问，保留旧版毫秒舍入规则。
+    private static let timestampLock = NSLock()
+    private static let timestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    static func iso(_ date: Date = Date()) -> String {
+        timestampLock.withLock { timestampFormatter.string(from: date) }
     }
 
     static func parse(_ value: String) -> Date? {

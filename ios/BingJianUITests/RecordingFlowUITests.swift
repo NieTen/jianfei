@@ -7,7 +7,7 @@ final class RecordingFlowUITests: XCTestCase {
         let app = XCUIApplication()
         // 独立本地身份，不连接真实后台、不触碰使用者的记录。
         app.launchArguments = ["-local_namespace", "ui-" + UUID().uuidString.lowercased(),
-                               "-setup_completed", "NO", "-sync_enabled", "NO",
+                               "-setup_completed", "NO", "-sync_enabled", "NO", "-health_enabled", "NO", "-server_url", "",
                                "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
         XCTAssertTrue(app.textFields["年龄"].waitForExistence(timeout: 30))
@@ -64,8 +64,8 @@ final class RecordingFlowUITests: XCTestCase {
         app.buttons["meal.photos"].tap()
         let cancel = app.buttons.matching(NSPredicate(format: "label == '取消' OR label == 'Cancel'")).firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 15), "点击相册应打开系统照片选择器")
-        let addButton = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '添加' OR label BEGINSWITH 'Add'")).firstMatch
-        // 云端模拟器首次加载照片库时先显示取消按钮；等待加载完成后再检查添加操作。
+        let addButton = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '添加' OR label BEGINSWITH 'Add' OR label == '完成' OR label == 'Done'")).firstMatch
+        // iOS 27 的系统选择器将确认操作改为“完成”；旧版本仍显示“添加”。
         let pickerLoaded = addButton.waitForExistence(timeout: 45)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "相册入口实际点击"
@@ -134,6 +134,24 @@ final class RecordingFlowUITests: XCTestCase {
         assertOnlyCustomMenu(app)
         app.navigationBars["体重记录"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.buttons["trends.weightHistory"].waitForExistence(timeout: 10))
+        assertOnlyCustomMenu(app)
+
+        // 测试构建显式不配置云地址：真实入口应说明状态，不能悄悄连接局域网或展示失效登录表单。
+        app.buttons["tab.settings"].tap()
+        let cloudAccount = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "云端账号与 SVIP")).firstMatch
+        for _ in 0..<8 {
+            if cloudAccount.exists && cloudAccount.isHittable { break }
+            app.scrollViews.firstMatch.swipeDown()
+        }
+        XCTAssertTrue(cloudAccount.isHittable)
+        cloudAccount.tap()
+        XCTAssertTrue(app.navigationBars["云端账号"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["官方云服务尚未启用"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.textFields["cloud.email"].exists)
+        let cloudScreenshot = XCTAttachment(screenshot: app.screenshot())
+        cloudScreenshot.name = "云账号入口未配置时关闭在线功能"
+        cloudScreenshot.lifetime = .keepAlways
+        add(cloudScreenshot)
         assertOnlyCustomMenu(app)
     }
 

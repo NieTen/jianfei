@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .api import router
+from .invite_page import public_router
 from .errors import AppError
 from .runtime import Runtime
 
@@ -79,6 +80,7 @@ def create_app(settings=None, run_jobs=True):
                           docs_url="/api/docs", redoc_url=None)
     application.add_middleware(RequestGuard)
     application.include_router(router)
+    application.include_router(public_router)
 
     @application.exception_handler(AppError)
     async def application_error(request: Request, error: AppError):

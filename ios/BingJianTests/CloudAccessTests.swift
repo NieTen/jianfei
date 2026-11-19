@@ -42,6 +42,44 @@ final class CloudAccessTests: XCTestCase {
         XCTAssertEqual(CloudEntitlementLease.duration([:]), 0)
     }
 
+    func testOfflineConsentRevocationSurvivesRestartAndOverridesOldServerConsent() throws {
+        let name = "cloud-revocation-tests-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let scope = CloudAIRevocationStore.scope(server: "https://example.invalid", instance: "server", user: "user")
+        let original = CloudAIRevocationStore(defaults: defaults)
+        let token = original.request(for: scope)
+        let reopened = CloudAIRevocationStore(defaults: try XCTUnwrap(UserDefaults(suiteName: name)))
+        XCTAssertEqual(reopened.pendingToken(for: scope), token)
+        let oldServer: JSONObject = ["allowed": .bool(true), "revision": .number(1)]
+        XCTAssertFalse(reopened.applyingLocalDenial(to: oldServer, scope: scope).flag("allowed"))
+        reopened.acknowledge(scope: scope, token: token)
+        XCTAssertNil(original.pendingToken(for: scope))
+        XCTAssertTrue(original.applyingLocalDenial(to: oldServer, scope: scope).flag("allowed"))
+    }
+
+    func testConsentRevocationIsIsolatedByAccountAndIgnoresStaleAcknowledgements() throws {
+        let name = "cloud-revocation-tests-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = CloudAIRevocationStore(defaults: defaults)
+        let scope = CloudAIRevocationStore.scope(server: "https://example.invalid", instance: "server", user: "user")
+        let oldToken = store.request(for: scope)
+        let currentToken = store.request(for: scope)
+        store.acknowledge(scope: scope, token: oldToken)
+        XCTAssertEqual(store.pendingToken(for: scope), currentToken)
+        for parts in [("https://other.invalid", "server", "user"),
+                      ("https://example.invalid", "other", "user"),
+                      ("https://example.invalid", "server", "other")] {
+            let other = CloudAIRevocationStore.scope(server: parts.0, instance: parts.1, user: parts.2)
+            XCTAssertNil(store.pendingToken(for: other))
+            store.acknowledge(scope: other, token: currentToken)
+            XCTAssertEqual(store.pendingToken(for: scope), currentToken)
+        }
+        store.acknowledge(scope: scope, token: currentToken)
+        XCTAssertNil(store.pendingToken(for: scope))
+    }
+
     #if os(iOS)
     @MainActor
     func testCloudCannotUseDeviceDirectOrSavedProviderWithoutEntitlement() async throws {

@@ -56,7 +56,9 @@ def source_group(directory):
                 swift.append(reference)
             elif path.suffix == ".xcprivacy":
                 resources.append(reference)
-    group = add(str(directory.relative_to(ROOT)), "PBXGroup", children=children, path=directory.name, sourceTree="<group>")
+    # 保留初始工程的组标识，Mac 和 Windows 重新生成时使用相同的路径分隔符。
+    group_key = "\\".join(directory.relative_to(ROOT).parts)
+    group = add(group_key, "PBXGroup", children=children, path=directory.name, sourceTree="<group>")
     return group, swift, resources
 
 
@@ -95,8 +97,8 @@ def resources():
         "NSHealthUpdateUsageDescription": "健康数据以你的明确授权为前提，当前版本优先保存本机记录。",
     }
     write_plist(ROOT / "BingJian" / "Info.plist", {
-        **base, "CFBundleDisplayName": "并肩", "LSRequiresIPhoneOS": True,
         "BingJianCloudServerURL": "$(BINGJIAN_CLOUD_SERVER_URL)",
+        **base, "CFBundleDisplayName": "并肩", "LSRequiresIPhoneOS": True,
         "NSCameraUsageDescription": "拍摄餐食照片以辅助记录，也可拍摄挑战邀请码。",
         "NSPhotoLibraryUsageDescription": "选择你指定的餐食照片，用于个人饮食记录。",
         "NSLocalNetworkUsageDescription": "连接你配置的私有服务器，进行记录同步和伙伴共享。",
@@ -121,6 +123,13 @@ def resources():
         "com.apple.developer.healthkit": True,
         "com.apple.developer.healthkit.background-delivery": True,
         "aps-environment": "$(APNS_ENVIRONMENT)",
+    })
+    # 公网邀请构建单独选择此文件，已有私有部署签名无需申请域名授权。
+    write_plist(ROOT / "BingJian" / "CloudLinks.entitlements", {
+        "com.apple.developer.healthkit": True,
+        "com.apple.developer.healthkit.background-delivery": True,
+        "aps-environment": "$(APNS_ENVIRONMENT)",
+        "com.apple.developer.associated-domains": ["applinks:$(BINGJIAN_LINK_DOMAIN)"],
     })
     write_plist(ROOT / "BingJianWatch" / "BingJianWatch.entitlements", {
         "com.apple.developer.healthkit": True,
@@ -240,7 +249,8 @@ def main():
         elif name == "BingJian":
             settings.update({"IPHONEOS_DEPLOYMENT_TARGET": "17.0", "TARGETED_DEVICE_FAMILY": "1",
                              "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator", "SUPPORTS_MACCATALYST": "NO",
-                             "INFOPLIST_FILE": name + "/Info.plist", "CODE_SIGN_ENTITLEMENTS": name + "/" + name + ".entitlements",
+                             "INFOPLIST_FILE": name + "/Info.plist", "CODE_SIGN_ENTITLEMENTS": "$(BINGJIAN_IPHONE_ENTITLEMENTS)",
+                             "BINGJIAN_IPHONE_ENTITLEMENTS": "BingJian/BingJian.entitlements", "BINGJIAN_LINK_DOMAIN": "",
                              "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon", "APNS_ENVIRONMENT": "development",
                              "CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]": name + "/Simulator.entitlements",
                              "OTHER_LDFLAGS": ["$(inherited)", "-lsqlite3"]})

@@ -2,11 +2,14 @@ import asyncio
 import json
 import uuid
 from datetime import date
+from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .errors import AppError
+from .sharing import ShareRequest
 from .models import (
     ChallengeConfirmation, ChallengeCreate, ChallengeJoin, ConsentRequest, DeleteRequest,
     DeviceAction, EncouragementRequest, ExportRequest, IdentityBinding, Login, MediaInit,
@@ -14,6 +17,7 @@ from .models import (
     RefreshRequest, Registration,
     EmailCodeRequest, EmailResetRequest, PasswordChangeRequest, EmailBindingCodeRequest, EmailBindingRequest,
     AIConsentRequest, AIPreferenceRequest,
+    DeviceRecoveryCodeRequest, DeviceRecoveryRequest,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -74,6 +78,16 @@ def login(payload: Login, request: Request):
 @router.post("/auth/refresh")
 def refresh(payload: RefreshRequest, request: Request):
     return runtime(request).auth.refresh(payload.refresh_token)
+
+
+@router.post("/auth/device-recovery-code")
+def device_recovery_code(payload: DeviceRecoveryCodeRequest, request: Request):
+    return runtime(request).auth.device_recovery_code(payload)
+
+
+@router.post("/auth/recover-device")
+def recover_device(payload: DeviceRecoveryRequest, request: Request):
+    return runtime(request).auth.recover_device(payload)
 
 
 @router.post("/auth/email-code")
@@ -277,6 +291,35 @@ def cancel_task(task_id: str, request: Request, identity=Depends(actor)):
 async def food_search(request: Request, q: str = Query(default="", max_length=100), external: bool = False,
                       identity=Depends(actor)):
     return await runtime(request).foods.search(identity, q, external)
+
+
+@router.get("/shares")
+def list_shares(request: Request, direction: Literal["sent", "received"], after: str = Query(default="", max_length=36),
+                identity=Depends(actor)):
+    return runtime(request).shares.listing(identity, direction, after)
+
+
+@router.put("/shares/{identifier}")
+def save_share(identifier: UUID, payload: ShareRequest, request: Request, identity=Depends(actor)):
+    return runtime(request).shares.save(identity, str(identifier), payload)
+
+
+@router.post("/shares/{identifier}/revoke")
+@router.delete("/shares/{identifier}")
+def revoke_share(identifier: UUID, request: Request, version: int | None = Query(default=None, ge=1), identity=Depends(actor)):
+    return runtime(request).shares.revoke(identity, str(identifier), version)
+
+
+@router.get("/shares/{identifier}/summary")
+def read_share(identifier: UUID, day: date, request: Request, identity=Depends(actor)):
+    result = runtime(request).shares.summary(identity, str(identifier), day.isoformat())
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/shares/{identifier}/media/{media_id}")
+def read_share_photo(identifier: UUID, media_id: str, request: Request, thumbnail: bool = False, identity=Depends(actor)):
+    path = runtime(request).shares.photo(identity, str(identifier), media_id, thumbnail)
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @router.post("/challenges")

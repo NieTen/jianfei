@@ -325,10 +325,11 @@ class ChallengeService:
                         repo.delete("active_members", {"challenge_id": challenge["id"]})
 
     def summary(self, actor, challenge_id, day):
-        with self.db.read() as repo:
+        with self.db.read(snapshot=True) as repo:
+            validate_actor(repo, actor)
             challenge, _ = self.require_member(repo, actor["user_id"], challenge_id)
             result = {"challenge": self.public_challenge(repo, challenge, actor["user_id"]),
-                      "members": [], "cached_until": (utc_now() + timedelta(hours=24)).isoformat(), "server_time": now_iso()}
+                      "members": [], "cached_until": (utc_now() + timedelta(minutes=5)).isoformat(), "server_time": now_iso()}
             for member in repo.find("members", {"challenge_id": challenge_id, "status": "active"}):
                 user_id = member["user_id"]
                 user = repo.one("users", {"id": user_id})
@@ -363,7 +364,7 @@ class ChallengeService:
                     projection["checked_in"] = summary["checked_in"] or summary["intake_complete"]
                     projection["intake_complete"] = summary["intake_complete"]
                 if "weight" in scopes:
-                    projection["weight_kg"] = current
+                    projection["weight_kg"] = current if own or summary["has_weight_record"] else None
                     projection["has_weight_record"] = summary["has_weight_record"]
                 if "steps" in scopes:
                     projection["steps"] = summary["steps"]

@@ -68,6 +68,27 @@ struct LocalWeightRow: Identifiable, Sendable {
     var cursor: LocalPageCursor { LocalPageCursor(value: record.businessDate, id: id) }
 }
 
+struct LocalPendingPhoto: Sendable {
+    var id: String
+    var mealId: String
+    var url: URL
+    var cursor: LocalPageCursor { LocalPageCursor(value: "", id: id) }
+}
+
+struct LocalRecordsRevision: Equatable, Sendable {
+    var storeId: UUID
+    var generation: UInt64
+    var externalVersion: Int
+}
+
+struct LocalRecordChanges: Sendable {
+    var revision: LocalRecordsRevision
+    var replacesAll: Bool
+    var records: [AppRecord]
+    var removedIds: Set<String>
+    var isEmpty: Bool { !replacesAll && records.isEmpty && removedIds.isEmpty }
+}
+
 /// 按本地身份隔离的 SQLite 存储；actor 串行化访问，事务保证记录与待发变更一起落库。
 /// 同步回执、冲突、游标也在这里保存；不要绕过此层直接改 UI 内存数组冒充已保存。
 actor LocalDatabase {
@@ -76,6 +97,12 @@ actor LocalDatabase {
     private var diagnosticSchemaReady = false
     private var diagnosticCleanupRunning = false
     private var weightIndexReady = false
+    private var mediaIndexReady = false
+    private var snapshotActive = false
+    private let recordsStoreId = UUID()
+    private var recordsGeneration: UInt64 = 0
+    private var fullReloadGeneration: UInt64 = 0
+    private var changedRecordIds: [String: UInt64] = [:]
     let directory: URL
 
     init(namespace: String) throws {
@@ -164,14 +191,61 @@ actor LocalDatabase {
     }
 
     private func put(_ record: AppRecord) throws {
-        try execute("INSERT INTO records(id,kind,business_date,document) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,business_date=excluded.business_date,document=excluded.document",
+        try execute("INSERT INTO records(id,kind,business_date,document) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,business_date=excluded.business_date,document=excluded.document WHERE records.document<>excluded.document",
                     [record.id, record.kind, record.businessDate, try Codec.json(record)])
+        if sqlite3_changes(connection) > 0 { recordsChanged(record.id) }
+    }
+
+    private func removeRecord(_ id: String) throws {
+        try execute("DELETE FROM records WHERE id=?", [id])
+        if sqlite3_changes(connection) > 0 { recordsChanged(id) }
+    }
+
+    /// 只记有限数量的受影响ID；事务回滚最多造成一次保守重读，不会丢失已提交变化。
+    private func recordsChanged(_ id: String? = nil) {
+        recordsGeneration += 1
+        if let id { changedRecordIds[id] = recordsGeneration }
+        if id == nil || changedRecordIds.count > 512 {
+            fullReloadGeneration = recordsGeneration
+            changedRecordIds.removeAll(keepingCapacity: true)
+        }
+    }
+
+    /// 同连接无变更不读业务正文；跨空间、其他连接写入或变更日志溢出时保守全量读取。
+    func recordChanges(since previous: LocalRecordsRevision?) throws -> LocalRecordChanges {
+        let externalVersion = Int(try query("PRAGMA data_version").first?[0] ?? "0") ?? 0
+        let current = LocalRecordsRevision(storeId: recordsStoreId, generation: recordsGeneration, externalVersion: externalVersion)
+        guard let previous, previous.storeId == current.storeId, previous.externalVersion == externalVersion,
+              previous.generation >= fullReloadGeneration, previous.generation <= recordsGeneration else {
+            return LocalRecordChanges(revision: current, replacesAll: true, records: try allRecords(), removedIds: [])
+        }
+        let ids = changedRecordIds.compactMap { $0.value > previous.generation ? $0.key : nil }
+        guard !ids.isEmpty else {
+            return LocalRecordChanges(revision: current, replacesAll: false, records: [], removedIds: [])
+        }
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        let values = try query("SELECT document FROM records WHERE id IN (\(placeholders)) ORDER BY business_date DESC,id", ids).map {
+            try Codec.decoder().decode(AppRecord.self, from: Data(($0[0] ?? "{}").utf8))
+        }
+        return LocalRecordChanges(revision: current, replacesAll: false, records: values,
+                                  removedIds: Set(ids).subtracting(values.map(\.id)))
     }
 
     func allRecords() throws -> [AppRecord] {
-        try query("SELECT document FROM records ORDER BY business_date DESC,id").compactMap { row in
-            guard let value = row[0]?.data(using: .utf8) else { return nil }
-            return try Codec.decoder().decode(AppRecord.self, from: value)
+        // 冷启动仍需全部业务记录，逐行解码，避免同时保留整库原始 JSON 与解码后的记录。
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, "SELECT document FROM records ORDER BY business_date DESC,id", -1, &statement, nil) == SQLITE_OK else { throw failure() }
+        defer { sqlite3_finalize(statement) }
+        let decoder = Codec.decoder()
+        var records: [AppRecord] = []
+        while true {
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE { return records }
+            guard status == SQLITE_ROW else { throw failure() }
+            if let bytes = sqlite3_column_text(statement, 0) {
+                let data = Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 0)))
+                records.append(try decoder.decode(AppRecord.self, from: data))
+            }
         }
     }
 
@@ -463,7 +537,7 @@ actor LocalDatabase {
                 try execute("DELETE FROM outbox WHERE entity_id=?", [conflict.id])
                 try execute("DELETE FROM conflicts WHERE entity_id=?", [conflict.id])
                 if let remote = conflict.remote { try put(remote) }
-                else { try execute("DELETE FROM records WHERE id=?", [conflict.id]) }
+                else { try removeRecord(conflict.id) }
                 if keepLocal { try saveValidated(local, deviceId: deviceId) }
             }
         } catch {
@@ -474,15 +548,19 @@ actor LocalDatabase {
 
     func applyRemote(_ values: [AppRecord], cursor: String?) throws {
         try transaction {
-            for value in values {
-                let pending = try query("SELECT change_id FROM outbox WHERE entity_id=? LIMIT 1", [value.id])
-                if !pending.isEmpty, let local = try record(value.id) {
-                    if value.version > local.version {
-                        try addConflict(entityId: value.id, remote: value, message: "另一设备修改了这条记录")
-                    }
-                } else { try put(value) }
-            }
+            try applyRemoteValues(values)
             if let cursor { try setMetadata("sync_cursor", value: cursor) }
+        }
+    }
+
+    private func applyRemoteValues(_ values: [AppRecord]) throws {
+        for value in values {
+            let pending = try query("SELECT change_id FROM outbox WHERE entity_id=? LIMIT 1", [value.id])
+            if !pending.isEmpty, let local = try record(value.id) {
+                if value.version > local.version {
+                    try addConflict(entityId: value.id, remote: value, message: "另一设备修改了这条记录")
+                }
+            } else { try put(value) }
         }
     }
 
@@ -528,11 +606,23 @@ actor LocalDatabase {
         return directory.appendingPathComponent("media").appendingPathComponent(safeId + ".jpg")
     }
 
-    func pendingPhotos() throws -> [(String, String, URL)] {
-        try query("SELECT id,meal_id FROM media WHERE uploaded=0").compactMap { row in
-            guard let id = row[0], let mealId = row[1] else { return nil }
-            return (id, mealId, photoURL(id))
+    /// 只读取允许同步的餐次照片，避免大量仅本机照片反复挤占上传批次。
+    func pendingPhotos(after: LocalPageCursor? = nil, limit: Int = 50) throws -> LocalPage<LocalPendingPhoto> {
+        if !mediaIndexReady {
+            try execute("CREATE INDEX IF NOT EXISTS idx_media_pending ON media(uploaded,id)")
+            mediaIndexReady = true
         }
+        let size = pageSize(limit)
+        let rows = try query("""
+        SELECT m.id,m.meal_id FROM media m JOIN records r ON r.id=m.meal_id
+        WHERE m.uploaded=0 AND m.id>? AND r.kind='meal'
+          AND CASE WHEN json_valid(r.document) THEN json_extract(r.document,'$.deleted_at') IS NULL
+              AND COALESCE(json_extract(r.document,'$.payload.sync_photos'),0)=1 ELSE 0 END
+        ORDER BY m.id LIMIT ?
+        """, [after?.id ?? "", String(size + 1)]).map { row in
+            LocalPendingPhoto(id: row[0] ?? "", mealId: row[1] ?? "", url: photoURL(row[0] ?? ""))
+        }
+        return page(rows, limit: size, after: after, before: nil, cursor: { $0.cursor })
     }
 
     func photoUploaded(_ id: String) throws { try execute("UPDATE media SET uploaded=1 WHERE id=?", [id]) }
@@ -552,12 +642,22 @@ actor LocalDatabase {
         }
     }
 
-    func pendingCommands() throws -> [JSONObject] {
-        try query("SELECT id,path,method,body,priority FROM commands ORDER BY priority DESC,created_at").map { row in
+    /// 执行队列只解码一个批次；已确认的命令移除后再从优先级最高处读取。
+    func pendingCommands(limit: Int = 50) throws -> [JSONObject] {
+        try prepareStatusIndexes()
+        return try query("SELECT id,path,method,body,priority FROM commands ORDER BY priority DESC,created_at,id LIMIT ?", [String(pageSize(limit))]).map { row in
             ["id": .string(row[0] ?? ""), "path": .string(row[1] ?? ""), "method": .string(row[2] ?? ""),
              "body": .object(try JSONDecoder().decode(JSONObject.self, from: Data((row[3] ?? "{}").utf8))),
              "priority": .number(Double(row[4] ?? "0") ?? 0)]
         }
+    }
+
+    func hasPendingCommands() throws -> Bool {
+        try !query("SELECT id FROM commands ORDER BY priority DESC,created_at,id LIMIT 1").isEmpty
+    }
+
+    func clearSharedSummaries() throws {
+        try execute("DELETE FROM metadata WHERE key GLOB ?", ["shared_summary:*"])
     }
 
     func removeCommand(_ id: String) throws { try execute("DELETE FROM commands WHERE id=?", [id]) }
@@ -659,26 +759,52 @@ actor LocalDatabase {
     }
 
     func beginSnapshot() throws {
-        try setMetadata("snapshot_seen", value: "[]")
+        // 临时表属于当前连接，断开即丢弃；快照重试从头建立，不能复用半次集合。
+        try execute("PRAGMA temp_store=FILE")
+        try execute("CREATE TEMP TABLE IF NOT EXISTS snapshot_seen(id TEXT PRIMARY KEY) WITHOUT ROWID")
+        try execute("DELETE FROM snapshot_seen WHERE 1=1")
+        snapshotActive = true
     }
 
-    func finishSnapshot(cursor: String, seen: Set<String>) throws {
+    func applySnapshotPage(_ values: [AppRecord]) throws {
+        guard snapshotActive else { throw APIError(code: "SNAPSHOT_STATE", message: "快照尚未开始，请重新同步") }
         try transaction {
-            for value in try allRecords() where !seen.contains(value.id) {
-                let dirty = try query("SELECT change_id FROM outbox WHERE entity_id=? LIMIT 1", [value.id])
-                if dirty.isEmpty { try execute("DELETE FROM records WHERE id=?", [value.id]) }
-                else if value.version > 0 {
-                    try addConflict(entityId: value.id, remote: nil, message: "服务器已移除这条记录，可选择另存为新记录")
+            try applyRemoteValues(values)
+            for value in values { try execute("INSERT OR IGNORE INTO snapshot_seen(id) VALUES(?)", [value.id]) }
+        }
+    }
+
+    /// 每次最多核对100条未出现在快照中的记录；只在最后一批提交最终同步游标。
+    func finishSnapshot(cursor: String, after: String? = nil, limit: Int = 100) throws -> String? {
+        guard snapshotActive else { throw APIError(code: "SNAPSHOT_STATE", message: "快照尚未开始，请重新同步") }
+        let boundary: String? = try transaction {
+            let size = pageSize(limit)
+            let rows = try query("""
+            SELECT r.id,COALESCE(json_extract(r.document,'$.version'),0),
+                   EXISTS(SELECT 1 FROM outbox o WHERE o.entity_id=r.id)
+            FROM records r WHERE r.id>? AND NOT EXISTS(SELECT 1 FROM snapshot_seen s WHERE s.id=r.id)
+            ORDER BY r.id LIMIT ?
+            """, [after ?? "", String(size + 1)])
+            for row in rows.prefix(size) {
+                if row[2] == "0" { try removeRecord(row[0] ?? "") }
+                else if (Int(row[1] ?? "0") ?? 0) > 0 {
+                    try addConflict(entityId: row[0] ?? "", remote: nil, message: "服务器已移除这条记录，可选择另存为新记录")
                 }
             }
+            if rows.count > size { return rows[size - 1][0] }
             try setMetadata("sync_cursor", value: cursor)
+            try execute("DELETE FROM snapshot_seen WHERE 1=1")
+            return nil
         }
+        if boundary == nil { snapshotActive = false }
+        return boundary
     }
 
     func clearLocalData() throws {
         try transaction {
             for table in ["records", "outbox", "conflicts", "media", "logs"] {
                 try execute("DELETE FROM " + table + " WHERE 1=1")
+                if table == "records", sqlite3_changes(connection) > 0 { recordsChanged() }
             }
             try execute("DELETE FROM metadata WHERE key!='bound_user'")
             try execute("DELETE FROM commands WHERE priority<100")
@@ -691,20 +817,34 @@ actor LocalDatabase {
         }
     }
 
-    func importArchive(_ contents: ArchiveContents, preferIncoming: Bool, restoreDeleted: Bool, deviceId: String) throws -> Int {
+    func importArchive(_ contents: ArchiveContents, preferIncoming: Bool, restoreDeleted: Bool, deviceId: String,
+                       preserveDeletionMarkers: Bool = false, expectedRecords: [AppRecord]? = nil) throws -> Int {
+        try Task.checkCancellation()
         for record in contents.records { try RecordValidator.validate(record) }
         var createdFiles: [URL] = []
         var imported = 0
         do {
             try transaction {
+                if let expectedRecords {
+                    let expected = Dictionary(uniqueKeysWithValues: expectedRecords.map { ($0.id, $0) })
+                    for incoming in contents.records {
+                        let current = try record(incoming.id), old = expected[incoming.id]
+                        guard current?.payload == old?.payload, current?.deletedAt == old?.deletedAt,
+                              current?.kind == old?.kind, current?.businessDate == old?.businessDate else {
+                            throw APIError(code: "MIGRATION_TARGET_CHANGED", message: "目标记录在预览后发生变化，请重新预览再确认")
+                        }
+                    }
+                }
                 var mealMappings: [String: String] = [:]
                 var photoMappings: [String: String] = [:]
                 var importedMeals = Set<String>()
                 for original in contents.records {
+                    try Task.checkCancellation()
+                    if original.deletedAt != nil && !preserveDeletionMarkers { continue }
                     let existing = try record(original.id)
                     if existing != nil && !preferIncoming { continue }
                     var value = original
-                    if existing?.deletedAt != nil {
+                    if existing?.deletedAt != nil && original.deletedAt == nil {
                         guard restoreDeleted else { continue }
                         value.id = UUID().uuidString.lowercased()
                         value.sourceId = nil
@@ -740,7 +880,7 @@ actor LocalDatabase {
                     try execute("DELETE FROM outbox WHERE entity_id=? AND state!='inflight'", [value.id])
                     let mutation = SyncMutation(changeId: UUID().uuidString.lowercased(), entityId: value.id, kind: value.kind,
                         businessDate: value.businessDate, payload: value.payload, sourceId: value.sourceId,
-                        baseVersion: value.version, deletedAt: nil)
+                        baseVersion: value.version, deletedAt: value.deletedAt)
                     try execute("INSERT INTO outbox(change_id,entity_id,document,state,created_at) VALUES(?,?,?,'pending',?)",
                                 [mutation.changeId, value.id, try Codec.json(mutation), TimeFormat.iso()])
                     imported += 1
@@ -767,5 +907,101 @@ actor LocalDatabase {
             for url in createdFiles { try? FileManager.default.removeItem(at: url) }
             throw error
         }
+    }
+
+    func recoverySummary() throws -> JSONObject {
+        let row = try query("SELECT COUNT(id),MIN(business_date),MAX(business_date) FROM records WHERE json_extract(document,'$.deleted_at') IS NULL").first ?? []
+        return ["record_count": .number(Double(row.first.flatMap { $0 }.flatMap(Int.init) ?? 0)),
+                "first_day": .string(row.count > 1 ? row[1] ?? "" : ""),
+                "last_day": .string(row.count > 2 ? row[2] ?? "" : ""),
+                "bound": .bool(try metadata("bound_user") != nil)]
+    }
+
+    /// 备份使用独立的只读连接。即使有大量记录或照片，状态页和写入仍可访问当前 actor。
+    func createRecoverySnapshot(at root: URL, includePhotos: Bool, includeDeleted: Bool = false,
+                                allowMissingPhotos: Bool = false) async throws -> ArchiveContents {
+        try await LocalSnapshotReader.read(directory: directory, destination: root, includePhotos: includePhotos,
+                                           includeDeleted: includeDeleted, allowMissingPhotos: allowMissingPhotos)
+    }
+}
+
+/// 迁移和本机备份共用同一份业务快照，不读取凭据、权限缓存和待执行命令。
+enum LocalSnapshotReader {
+    static func read(directory: URL, destination: URL, includePhotos: Bool, includeDeleted: Bool,
+                     allowMissingPhotos: Bool, requireUnbound: Bool = false) async throws -> ArchiveContents {
+        let work = Task.detached(priority: .utility) {
+            var connection: OpaquePointer?
+            let database = directory.appendingPathComponent("records.sqlite3")
+            guard sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+                sqlite3_close(connection)
+                throw readError()
+            }
+            defer { sqlite3_close(connection) }
+            sqlite3_busy_timeout(connection, 5000)
+            guard sqlite3_exec(connection, "BEGIN", nil, nil, nil) == SQLITE_OK else { throw readError() }
+            defer { sqlite3_exec(connection, "ROLLBACK", nil, nil, nil) }
+            // 首次读固定 SQLite 修订，也在这个修订里核对来源是否仍属未绑定空间。
+            let owner = try statement(connection, "SELECT (SELECT value FROM metadata WHERE key='bound_user')")
+            defer { sqlite3_finalize(owner) }
+            guard sqlite3_step(owner) == SQLITE_ROW else { throw readError() }
+            let binding = sqlite3_column_text(owner, 0).map { String(cString: $0) }
+            guard !requireUnbound || binding == nil else {
+                throw APIError(code: "MIGRATION_SOURCE", message: "源空间已绑定账号，请先登录该账号导出个人加密包")
+            }
+            let predicate = includeDeleted ? "" : " WHERE json_extract(document,'$.deleted_at') IS NULL"
+            let recordsQuery = try statement(connection, "SELECT document FROM records" + predicate + " ORDER BY id")
+            defer { sqlite3_finalize(recordsQuery) }
+            let files = FileManager.default
+            try files.createDirectory(at: destination, withIntermediateDirectories: false,
+                                      attributes: [.protectionKey: FileProtectionType.complete])
+            do {
+                var records: [AppRecord] = []
+                var photos: [ArchivePhoto] = []
+                var seen = Set<String>()
+                var missing: [String] = []
+                let decoder = Codec.decoder()
+                while true {
+                    try Task.checkCancellation()
+                    let status = sqlite3_step(recordsQuery)
+                    if status == SQLITE_DONE { break }
+                    guard status == SQLITE_ROW, let bytes = sqlite3_column_blob(recordsQuery, 0) else { throw readError() }
+                    let record = try decoder.decode(AppRecord.self, from: Data(bytes: bytes, count: Int(sqlite3_column_bytes(recordsQuery, 0))))
+                    records.append(record)
+                    guard includePhotos, record.deletedAt == nil, record.kind == "meal" else { continue }
+                    for id in record.payload.strings("photo_ids") where seen.insert(id).inserted {
+                        guard UUID(uuidString: id) != nil else { throw readError() }
+                        let source = directory.appendingPathComponent("media").appendingPathComponent(id + ".jpg")
+                        let target = destination.appendingPathComponent(id + ".jpg")
+                        // 原图按 ID 原子写入。固定文件链接后，即使源路径被清理或替换，也可完成导出。
+                        do {
+                            do { try files.linkItem(at: source, to: target) }
+                            catch { try files.copyItem(at: source, to: target) }
+                        } catch {
+                            if files.fileExists(atPath: source.path) { throw error }
+                            if allowMissingPhotos { missing.append(id); continue }
+                            throw APIError(code: "MISSING_PHOTO", message: "部分照片尚未下载，请联网补齐后再导出完整备份")
+                        }
+                        photos.append(ArchivePhoto(id: id, mealId: record.id, url: target))
+                    }
+                }
+                return ArchiveContents(records: records, photos: photos, temporaryDirectory: destination,
+                    manifest: ["source_binding": .string(binding ?? "local:" + directory.lastPathComponent),
+                               "user_id": .string(directory.lastPathComponent), "missing_photo_ids": .array(missing.map(JSONValue.string))])
+            } catch {
+                try? files.removeItem(at: destination)
+                throw error
+            }
+        }
+        return try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+    }
+
+    private static func statement(_ connection: OpaquePointer?, _ sql: String) throws -> OpaquePointer {
+        var result: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, sql, -1, &result, nil) == SQLITE_OK, let result else { throw readError() }
+        return result
+    }
+
+    private static func readError() -> APIError {
+        APIError(code: "LOCAL_DATABASE", message: "无法读取当前数据修订，请重新确认备份或迁移来源")
     }
 }

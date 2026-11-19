@@ -120,7 +120,7 @@ class MediaService:
             return {**media, "received_size": received}
 
     def resolve(self, actor, media_id, challenge_id=None, thumbnail=False):
-        with self.db.read() as repo:
+        with self.db.read(snapshot=True) as repo:
             validate_actor(repo, actor)
             media = repo.one("media", {"id": self.safe_id(media_id), "status": "ready"})
             if not media:
@@ -135,15 +135,12 @@ class MediaService:
                 challenge = repo.one("challenges", {"id": challenge_id})
                 if not challenge or not challenge["start_at"] or not challenge["end_at"] or utc_now() < datetime.fromisoformat(challenge["start_at"]):
                     raise AppError("FORBIDDEN", "挑战开始后才能查看授权照片", 403)
-                meals = repo.find("entities", {"user_id": media["user_id"], "kind": "meal", "deleted_at": None,
-                                               "business_date__gte": consent["history_from"]})
-                visible_meals = [
-                    meal for meal in meals
-                    if datetime.fromisoformat(challenge["start_at"]) <=
-                    day_window(meal["business_date"], challenge["timezone"], challenge["day_start_minutes"])[0] <
-                    datetime.fromisoformat(challenge["end_at"])
-                ]
-                if not any(media_id in json.loads(meal["payload"]).get("photo_ids", []) for meal in visible_meals):
+                meal = repo.one("entities", {"id": media["meal_id"], "user_id": media["user_id"], "kind": "meal",
+                                             "deleted_at": None, "business_date__gte": consent["history_from"]})
+                if media["temporary"] or not meal or media_id not in json.loads(meal["payload"]).get("photo_ids", []):
+                    raise AppError("FORBIDDEN", "照片不在授权餐次内", 403)
+                day_start = day_window(meal["business_date"], challenge["timezone"], challenge["day_start_minutes"])[0]
+                if not datetime.fromisoformat(challenge["start_at"]) <= day_start < datetime.fromisoformat(challenge["end_at"]):
                     raise AppError("FORBIDDEN", "照片不在授权历史范围内", 403)
             result = self.path(media_id, thumbnail)
             if not result.exists():

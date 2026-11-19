@@ -23,7 +23,7 @@ from app.errors import AppError
 from app.main import create_app
 from app.models import RecognitionRequest, Login
 from app.main import RequestGuard
-from app.cli import restore
+from app.cli import main as cli_main, restore
 from app.email_verification import EmailVerificationService
 from app.security import now_iso, utc_now
 
@@ -138,7 +138,11 @@ class CloudTests(unittest.TestCase):
         with self.service.db.read() as repo:
             self.assertEqual(repo.one("email_challenges", {"email": body["email"]})["attempts"], 1)
         body["email_code"] = code
-        self.assertEqual(self.client.post("/api/v1/auth/register", json=body).status_code, 200)
+        body["cloud_rules_version"] = "1"
+        accepted = self.client.post("/api/v1/auth/register", json=body)
+        self.assertEqual(accepted.status_code, 200)
+        with self.service.db.read() as repo:
+            self.assertIsNotNone(repo.one("audit", {"user_id": accepted.json()["user_id"], "action": "cloud_rules_acknowledged", "target_id": "1"}))
         self.assertEqual(self.client.post("/api/v1/auth/register", json=body).json()["code"], "INVALID_EMAIL_CODE")
         account = self.client.get("/api/v1/me", headers=self.headers()).json()
         self.assertEqual(account["email"], "user@example.invalid")
@@ -243,6 +247,140 @@ class CloudTests(unittest.TestCase):
         replay = self.client.post("/api/v1/auth/refresh", json={"refresh_token": self.user["refresh_token"]})
         self.assertEqual(replay.status_code, 401)
         self.assertEqual(self.client.get("/api/v1/me", headers=self.headers(renewed)).status_code, 401)
+
+    def test_revoked_device_requires_explicit_email_proof_for_reregistration(self):
+        previous = self.user["device_id"]
+        self.service.auth.revoke_device(self.actor(), previous)
+        body = {"username": "user@example.invalid", "password": "test-password-123", "previous_device_id": previous}
+        login = self.client.post("/api/v1/auth/login", json={"username": body["username"], "password": body["password"], "device_id": previous})
+        self.assertEqual(login.json()["code"], "DEVICE_REVOKED")
+        denied = self.client.post("/api/v1/auth/device-recovery-code", json=body | {"password": "wrong"})
+        self.assertEqual(denied.json()["code"], "INVALID_CREDENTIALS")
+        with self.service.db.transaction() as repo:
+            repo.delete("email_challenges", {"email": body["username"]})
+        accepted = self.client.post("/api/v1/auth/device-recovery-code", json=body)
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        self.assertEqual(set(accepted.json()), {"sent", "expires_in", "delivery_status"})
+        while self.service.auth.email.deliver_pending():
+            pass
+        self.assertEqual(self.delivered[-1][2], "device_recovery")
+        request = body | {"email_code": self.delivered[-1][1], "device_id": str(uuid.uuid4()), "device_name": "再次登记的手机"}
+        reused_id = self.client.post("/api/v1/auth/recover-device", json=request | {"device_id": previous})
+        self.assertEqual(reused_id.json()["code"], "DEVICE_ID_REQUIRED")
+        recovered = self.client.post("/api/v1/auth/recover-device", json=request)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual(recovered.json()["user_id"], self.user["user_id"])
+        self.assertFalse(self.client.get("/api/v1/me/entitlements", headers=self.headers(recovered.json())).json()["ai_food_recognition"])
+        self.assertEqual(self.client.get("/api/v1/me", headers=self.headers()).status_code, 401)
+        self.assertEqual(self.client.post("/api/v1/auth/recover-device", json=request | {"device_id": str(uuid.uuid4())}).json()["code"], "INVALID_EMAIL_CODE")
+        with self.service.db.read() as repo:
+            self.assertIsNotNone(repo.one("devices", {"id": previous})["revoked_at"])
+            self.assertIsNone(repo.one("devices", {"id": request["device_id"]})["revoked_at"])
+
+    def test_device_reregistration_does_not_accept_active_device_or_unverified_email(self):
+        body = {"username": "user@example.invalid", "password": "test-password-123", "previous_device_id": self.user["device_id"]}
+        self.assertEqual(self.client.post("/api/v1/auth/device-recovery-code", json=body).json()["code"], "DEVICE_RECOVERY_NOT_REQUIRED")
+        self.service.auth.revoke_device(self.actor(), self.user["device_id"])
+        with self.service.db.transaction() as repo:
+            repo.update("users", {"email_verified_at": None}, {"id": self.user["user_id"]})
+        self.assertEqual(self.client.post("/api/v1/auth/device-recovery-code", json=body).json()["code"], "VERIFIED_EMAIL_REQUIRED")
+
+    def test_device_code_cannot_follow_transferred_email_or_use_password_reset_code(self):
+        other = self.register("other@example.invalid")
+        self.service.auth.revoke_device(self.actor(), self.user["device_id"])
+        body = {"username": "user@example.invalid", "password": "test-password-123", "previous_device_id": self.user["device_id"]}
+        with self.service.db.transaction() as repo:
+            repo.delete("email_challenges", {"email": body["username"]})
+        reset_code = self.code(body["username"], "reset_password")
+        request = body | {"email_code": reset_code, "device_id": str(uuid.uuid4())}
+        self.assertEqual(self.client.post("/api/v1/auth/recover-device", json=request).json()["code"], "INVALID_EMAIL_CODE")
+        with self.service.db.transaction() as repo:
+            repo.delete("email_challenges", {"email": body["username"]})
+        self.assertEqual(self.client.post("/api/v1/auth/device-recovery-code", json=body).status_code, 200)
+        while self.service.auth.email.deliver_pending():
+            pass
+        code = self.delivered[-1][1]
+        # 即使邮箱转让时遗留未失效挑战，也不能用旧账号的证明登记另一个账号。
+        with self.service.db.transaction() as repo:
+            repo.update("users", {"email": "moved@example.invalid"}, {"id": self.user["user_id"]})
+            repo.update("users", {"email": body["username"]}, {"id": other["user_id"]})
+        self.assertEqual(self.client.post("/api/v1/auth/recover-device", json=request | {"email_code": code}).json()["code"], "INVALID_EMAIL_CODE")
+
+    def test_device_ownership_conflict_uses_new_id_without_modifying_other_account(self):
+        other = self.register("other@example.invalid")
+        body = {"username": "user@example.invalid", "password": "test-password-123", "previous_device_id": other["device_id"]}
+        with self.service.db.transaction() as repo:
+            repo.delete("email_challenges", {"email": body["username"]})
+        self.assertEqual(self.client.post("/api/v1/auth/device-recovery-code", json=body).status_code, 200)
+        while self.service.auth.email.deliver_pending():
+            pass
+        response = self.client.post("/api/v1/auth/recover-device", json=body | {"email_code": self.delivered[-1][1], "device_id": str(uuid.uuid4())})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["user_id"], self.user["user_id"])
+        self.assertEqual(self.client.get("/api/v1/me", headers=self.headers(other)).status_code, 200)
+        with self.service.db.read() as repo:
+            self.assertEqual(repo.one("devices", {"id": other["device_id"]})["user_id"], other["user_id"])
+
+    def test_cloud_operational_status_uses_platform_record_not_legacy_environment(self):
+        self.assertFalse(self.service.providers.operational_status()["configured"])
+        self.configure()
+        status = self.service.providers.operational_status()
+        self.assertEqual(status["source"], "platform")
+        self.assertTrue(status["configured"])
+        self.assertTrue(status["enabled"])
+        self.assertEqual(set(status), {"configured", "enabled", "source", "revision"})
+        with self.service.db.transaction() as repo:
+            repo.update("cloud_ai_provider", {"enabled": 0}, {"id": "platform"})
+        self.assertTrue(self.service.providers.operational_status()["configured"])
+        self.assertFalse(self.service.providers.operational_status()["enabled"])
+
+    def test_late_consent_grant_cannot_overwrite_newer_withdrawal(self):
+        self.grant()
+        self.configure()
+        previous = self.client.get("/api/v1/me/ai-consent", headers=self.headers()).json()
+        withdrawn = self.client.put("/api/v1/me/ai-consent", headers=self.headers(), json={"allowed": False, "provider_revision": 0})
+        self.assertEqual(withdrawn.status_code, 200)
+        delayed = self.client.put("/api/v1/me/ai-consent", headers=self.headers(), json={"allowed": True,
+            "provider_revision": previous["provider_revision"], "expected_revision": previous["revision"]})
+        self.assertEqual(delayed.json()["code"], "AI_CONSENT_CHANGED")
+        self.assertFalse(self.client.get("/api/v1/me/ai-consent", headers=self.headers()).json()["allowed"])
+        explicit = self.client.put("/api/v1/me/ai-consent", headers=self.headers(), json={"allowed": True,
+            "provider_revision": withdrawn.json()["provider_revision"], "expected_revision": withdrawn.json()["revision"]})
+        self.assertEqual(explicit.status_code, 200, explicit.text)
+
+    def test_cli_status_reports_platform_configuration_without_keys(self):
+        self.configure()
+        output = io.StringIO()
+        with patch("sys.argv", ["app.cli", "status"]), patch("app.cli.Runtime", return_value=self.service), \
+             patch("app.cli.Settings.from_environment", return_value=self.settings), patch("sys.stdout", output):
+            cli_main()
+        status = json.loads(output.getvalue())
+        self.assertTrue(status["ai_configured"])
+        self.assertTrue(status["ai_enabled"])
+        self.assertEqual(status["ai_configuration_source"], "platform")
+        self.assertGreater(status["ai_provider_revision"], 0)
+        self.assertNotIn("fake-platform-key", output.getvalue())
+
+    def test_private_status_keeps_legacy_environment_source(self):
+        self.configure()
+        with patch.object(self.service.providers, "settings", replace(self.settings, deployment_mode="private", ai_url="")):
+            self.assertEqual(self.service.providers.operational_status(), {"configured": False, "enabled": False,
+                                                                          "source": "server_default", "revision": 0})
+
+    def test_basic_cloud_accounts_share_with_verified_email_without_svip(self):
+        reader = self.register("reader@example.invalid")
+        day = utc_now().date().isoformat()
+        path = "/api/v1/shares/" + str(uuid.uuid4())
+        saved = self.client.put(path, headers=self.headers(), json={
+            "recipient": "Reader@example.invalid", "scopes": ["diet"], "from_day": day, "through_day": day,
+            "expires_at": (utc_now() + timedelta(hours=1)).isoformat(), "expected_version": 0,
+        })
+        self.assertEqual(saved.status_code, 200, saved.text)
+        response = self.client.get(path + "/summary", params={"day": day}, headers=self.headers(reader))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("diet", response.json())
+        self.assertNotIn("weight_kg", response.json())
+        self.assertFalse(self.client.get("/api/v1/me/entitlements", headers=self.headers(reader)).json()["ai_food_recognition"])
 
     def test_basic_account_has_no_ai_but_keeps_regular_media_and_data(self):
         self.configure()

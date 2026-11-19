@@ -10,6 +10,8 @@ struct InviteDisplay: Identifiable {
 
 struct CommunityView: View {
     @EnvironmentObject private var model: AppModel
+    @AppStorage("pending_invite") private var pendingCode = ""
+    @AppStorage("pending_invite_server") private var inviteServer = ""
     @State private var create = false
     @State private var join = false
     var body: some View {
@@ -31,9 +33,18 @@ struct CommunityView: View {
                     }.buttonStyle(SoftActionStyle()).disabled(model.session == nil)
                     if model.session == nil {
                         Divider()
-                        NavigationLink { ConnectionSettingsView() } label: {
+                        NavigationLink {
+                            if model.isCloudMode { CloudAccountView() } else { ConnectionSettingsView() }
+                        } label: {
                             SettingsRow(title: "连接并登录后台", symbol: "link", detail: "登录后邀请伙伴或加入挑战")
                         }.buttonStyle(.plain)
+                    }
+                }
+                Surface {
+                    NavigationLink("分享我的记录卡片") { ProgressCardShareView() }
+                    if model.session != nil {
+                        Divider()
+                        NavigationLink("共享中心") { SharingCenterView() }
                     }
                 }
                 ForEach(model.challenges.indices, id: \.self) { index in
@@ -63,13 +74,18 @@ struct CommunityView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarLeading) { Text("伙伴").font(.title3.bold()).foregroundStyle(Palette.ink) } }
-        .task {
+        .task(id: model.session?.userId) {
+            presentPendingInvite()
             if model.session != nil { try? await model.refreshChallenges() }
-            if UserDefaults.standard.string(forKey: "pending_invite") != nil { join = true }
         }
+        .onChange(of: pendingCode) { _, _ in presentPendingInvite() }
         .refreshable { if model.session != nil { try? await model.refreshChallenges() } }
         .sheet(isPresented: $create) { NavigationStack { CreateChallengeView() } }
-        .sheet(isPresented: $join) { NavigationStack { JoinChallengeView() } }
+        .sheet(isPresented: $join) { NavigationStack { JoinChallengeView().id(pendingCode) } }
+    }
+
+    private func presentPendingInvite() {
+        join = model.session != nil && !pendingCode.isEmpty && (inviteServer.isEmpty || inviteServer == model.serverURL)
     }
 }
 
@@ -142,10 +158,17 @@ struct CreateChallengeView: View {
 struct JoinChallengeView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var code = UserDefaults.standard.string(forKey: "pending_invite") ?? ""
+    @State private var code = ""
+    @State private var previewedCode = ""
     @State private var showCamera = false
     @State private var message: String?
     @State private var preview: JSONObject = [:]
+
+    private var normalizedCode: String? {
+        let raw = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        if ChallengeInvitation.valid(raw) { return raw }
+        return URL(string: raw).flatMap { ChallengeInvitation.read($0, server: model.serverURL) }
+    }
 
     var body: some View {
         AppForm {
@@ -155,9 +178,15 @@ struct JoinChallengeView: View {
                 Button("拍摄邀请二维码", systemImage: "qrcode.viewfinder") { showCamera = true }
                 Button("查看邀请概要") {
                     model.perform {
-                        preview = try await model.api.send("challenge-invites/\(code.trimmingCharacters(in: .whitespacesAndNewlines))").object ?? [:]
+                        guard let requested = normalizedCode else { return }
+                        let context = model.localDataContext
+                        let result = try await model.api.send("challenge-invites/\(requested)").object ?? [:]
+                        try model.checkLocalContext(context)
+                        guard requested == normalizedCode else { return }
+                        preview = result
+                        previewedCode = requested
                     }
-                }.disabled(code.isEmpty)
+                }.disabled(normalizedCode == nil)
                 Text("邀请码有效期为 24 小时，每个邀请码只能加入一位成员。").font(.caption).foregroundStyle(.secondary)
             }
             if !preview.isEmpty {
@@ -172,17 +201,27 @@ struct JoinChallengeView: View {
             Button("加入并查看规则") {
                 Task {
                     do {
+                        guard let value = normalizedCode, value == previewedCode else { return }
                         _ = try await model.api.send("challenges/join", method: "POST",
-                            body: ["code": .string(code.trimmingCharacters(in: .whitespacesAndNewlines)), "goal": .object(try Codec.object(model.goal))])
-                        UserDefaults.standard.removeObject(forKey: "pending_invite")
+                            body: ["code": .string(value), "goal": .object(try Codec.object(model.goal))])
+                        if UserDefaults.standard.string(forKey: "pending_invite") == value {
+                            UserDefaults.standard.removeObject(forKey: "pending_invite")
+                            UserDefaults.standard.removeObject(forKey: "pending_invite_server")
+                        }
                         try await model.refreshChallenges()
                         dismiss()
                     } catch { message = error.localizedDescription }
                 }
-            }.buttonStyle(FilledActionStyle()).disabled(code.isEmpty || preview.isEmpty)
+            }.buttonStyle(FilledActionStyle()).disabled(normalizedCode != previewedCode || preview.isEmpty)
         }
         .navigationTitle("加入挑战")
-        .onChange(of: code) { _, _ in preview = [:] }
+        .onAppear {
+            let origin = UserDefaults.standard.string(forKey: "pending_invite_server") ?? ""
+            if code.isEmpty, origin.isEmpty || origin == model.serverURL {
+                code = UserDefaults.standard.string(forKey: "pending_invite") ?? ""
+            }
+        }
+        .onChange(of: code) { _, _ in preview = [:]; previewedCode = "" }
         .toolbar { Button("取消") { dismiss() } }
         .sheet(isPresented: $showCamera) {
             CameraPicker { data in
@@ -192,9 +231,7 @@ struct JoinChallengeView: View {
                         detector.symbologies = [.qr]
                         try VNImageRequestHandler(data: data).perform([detector])
                         guard let raw = detector.results?.first?.payloadStringValue else { throw APIError(code: "QR_NOT_FOUND", message: "没有识别到二维码，请重新拍摄") }
-                        if let url = URL(string: raw),
-                           let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "code" })?.value { code = value }
-                        else { code = raw }
+                        code = raw
                     } catch { message = error.localizedDescription }
                 }
             }
@@ -207,14 +244,9 @@ struct JoinChallengeView: View {
 
 struct InvitationView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
     let code: String
-    private var link: String {
-        var value = URLComponents()
-        value.scheme = "bingjian"
-        value.host = "join"
-        value.queryItems = [URLQueryItem(name: "code", value: code)]
-        return value.string ?? code
-    }
+    private var link: String { ChallengeInvitation.link(code: code, server: model.serverURL) }
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
@@ -259,6 +291,8 @@ struct ChallengeDetailView: View {
     @State private var showConsent = false
     @State private var showLeave = false
     @State private var invitation: InviteDisplay?
+    @State private var loadID = UUID()
+    @State private var visibleUntil: Date?
     private var challenge: JSONObject { data["challenge"]?.object ?? [:] }
 
     var body: some View {
@@ -400,8 +434,22 @@ struct ChallengeDetailView: View {
             }.padding(16)
         }
         .background(Palette.canvas).navigationTitle("共同记录").navigationBarTitleDisplayMode(.inline)
-        .task { await load() }.refreshable { await load() }
-        .onChange(of: model.day) { _, _ in Task { await load() } }
+        .task(id: model.day) {
+            data = [:]
+            messages = []
+            visibleUntil = nil
+            await load()
+        }
+        .refreshable { await load() }
+        .task(id: visibleUntil) {
+            guard let expiry = visibleUntil else { return }
+            do { try await Task.sleep(for: .seconds(max(0, expiry.timeIntervalSinceNow))) } catch { return }
+            guard visibleUntil == expiry else { return }
+            data = [:]
+            messages = []
+            information = "共享缓存已到期，正在重新核对授权"
+            await load()
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in Task { await load() } }
         .sheet(isPresented: $showConsent) {
             NavigationStack { ConsentEditorView(challengeId: challengeId, challenge: challenge) }
@@ -426,30 +474,54 @@ struct ChallengeDetailView: View {
     }
 
     private func load() async {
-        let key = "shared_summary:\(challengeId):\(model.day)"
+        let day = model.day
+        let key = "shared_summary:\(challengeId):\(day)"
+        let context = model.localDataContext
+        guard let store = model.store else { return }
+        let requestID = UUID()
+        loadID = requestID
+        let apiContext = await model.api.requestContext()
+        func current() -> Bool { !Task.isCancelled && model.localDataContext == context && loadID == requestID && model.day == day }
+        guard current() else { return }
         do {
-            let response = try await model.api.send("challenges/\(challengeId)/summary", query: ["day": model.day])
-            data = response.object ?? [:]
-            messages = try await model.api.send("challenges/\(challengeId)/encouragements").array?.compactMap(\.object) ?? []
-            var cached = data
-            cached["cached_at_local"] = .string(TimeFormat.iso())
-            try await model.requireStore().setMetadata(key, value: Codec.json(cached))
+            let requestedAt = TimeFormat.iso()
+            var response = try await model.api.send("challenges/\(challengeId)/summary", query: ["day": day], expectedContext: apiContext).object ?? [:]
+            guard current() else { return }
+            response["cached_at_local"] = .string(requestedAt)
+            guard let expiry = SharedSummaryLease.expiry(response) else {
+                throw APIError(code: "SHARE_EXPIRED", message: "共享缓存已到期，请刷新")
+            }
+            try await store.setMetadata(key, value: Codec.json(response))
+            guard current() else { return }
+            data = response
+            visibleUntil = expiry
             offline = false
             information = "更新于 \(Date().formatted(date: .omitted, time: .shortened))"
+            messages = []
         } catch {
-            if let apiError = error as? APIError, ["FORBIDDEN", "CONSENT_REVOKED", "DEVICE_REVOKED", "AUTH_EXPIRED"].contains(apiError.code) {
-                data = [:]
-                try? await model.requireStore().setMetadata(key, value: nil)
-            } else if let cached = try? await model.requireStore().metadata(key),
-                      let object = try? JSONDecoder().decode(JSONObject.self, from: Data(cached.utf8)),
-                      let until = TimeFormat.parse(object.text("cached_until")), until > Date(),
-                      let saved = TimeFormat.parse(object.text("cached_at_local")), Date() >= saved {
+            guard current() else { return }
+            data = [:]
+            messages = []
+            offline = false
+            visibleUntil = nil
+            if let network = error as? URLError,
+               [.notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost].contains(network.code),
+               let cached = try? await store.metadata(key),
+               let object = try? JSONDecoder().decode(JSONObject.self, from: Data(cached.utf8)),
+               let expiry = SharedSummaryLease.expiry(object), current() {
                 data = object
+                visibleUntil = expiry
                 offline = true
-            } else { data = [:] }
-            information = offline ? "当前显示最近同步缓存，授权租约到期后隐藏。\(error.localizedDescription)" : error.localizedDescription
+            } else if current() { try? await store.setMetadata(key, value: nil) }
+            guard current() else { return }
+            information = offline ? "离线副本 · \(data.text("cached_at_local"))，到期后隐藏" : error.localizedDescription
+            return
         }
+        let result = try? await model.api.send("challenges/\(challengeId)/encouragements", expectedContext: apiContext)
+        guard current(), visibleUntil.map({ $0 > Date() }) == true else { return }
+        messages = result?.array?.compactMap(\.object) ?? []
     }
+
 }
 
 struct SharedPhotoThumbnail: View {
@@ -462,8 +534,10 @@ struct SharedPhotoThumbnail: View {
             if let image { Image(uiImage: image).resizable().scaledToFill() }
             else { Image(systemName: "photo").foregroundStyle(.secondary) }
         }.frame(width: 80, height: 80).clipped().clipShape(RoundedRectangle(cornerRadius: 14))
-            .task {
-                if let data = try? await model.api.request("media/\(id)", query: ["challenge_id": challengeId, "thumbnail": "true"]) {
+            .task(id: model.localDataContext) {
+                image = nil
+                let context = model.localDataContext
+                if let data = try? await model.api.request("media/\(id)", query: ["challenge_id": challengeId, "thumbnail": "true"]), !Task.isCancelled, context == model.localDataContext {
                     image = UIImage(data: data)
                 }
             }
@@ -499,20 +573,40 @@ struct PartnerHistoryView: View {
                 }
             }.padding(16)
         }.background(Palette.canvas).navigationTitle("伙伴体重趋势").navigationBarTitleDisplayMode(.inline)
-            .task {
-                defer { loading = false }
+            .task(id: model.localDataContext) {
+                let context = model.localDataContext
+                let apiContext = await model.api.requestContext()
+                guard context == model.localDataContext else { return }
+                let selectedDate = model.selectedDate
+                points = []
+                loading = true
+                defer { if !Task.isCancelled && context == model.localDataContext { loading = false } }
                 do {
+                    var fetched: [TrendPoint] = []
                     for offset in (0..<30).reversed() {
                         try Task.checkCancellation()
-                        let date = Calendar.current.date(byAdding: .day, value: -offset, to: model.selectedDate) ?? model.selectedDate
+                        let date = Calendar.current.date(byAdding: .day, value: -offset, to: selectedDate) ?? selectedDate
                         let day = TimeFormat.day(date, timezone: model.profile.timezone, startMinutes: model.profile.dayStartMinutes)
-                        let response = try await model.api.send("challenges/\(challengeId)/summary", query: ["day": day]).object ?? [:]
+                        let response = try await model.api.send("challenges/\(challengeId)/summary", query: ["day": day],
+                                                                expectedContext: apiContext).object ?? [:]
                         if let member = response.objects("members").first(where: { $0.text("user_id") == userId }),
                            member.flag("has_weight_record"), let weight = member.number("weight_kg") {
-                            points.append(TrendPoint(day: day, date: date, value: weight))
+                            fetched.append(TrendPoint(day: day, date: date, value: weight))
                         }
                     }
-                } catch { message = error.localizedDescription }
+                    try model.checkLocalContext(context)
+                    try Task.checkCancellation()
+                    points = fetched
+                    message = ""
+                    loading = false
+                    try await Task.sleep(for: .seconds(300))
+                    points = []
+                    message = "共享查看已到期，重新进入可刷新"
+                } catch {
+                    guard !Task.isCancelled, context == model.localDataContext else { return }
+                    points = []
+                    message = error.localizedDescription
+                }
             }
     }
 }
@@ -558,7 +652,7 @@ struct ConsentEditorView: View {
                 Text("变化率、进度和积分也可能透露相关情况。请只选择愿意提供的信息。").font(.caption).foregroundStyle(.secondary)
                 Button("保存授权") { save(revoke: false) }
                 Button("撤销对该成员的全部共享", role: .destructive) { save(revoke: true) }
-                Text("离线撤销将在服务器收到后生效，已下载缓存最长可见至原 24 小时租约结束。").font(.caption).foregroundStyle(.secondary)
+                Text("离线撤销将在服务器确认后生效。本版本离线摘要最多保留显示 5 分钟。").font(.caption).foregroundStyle(.secondary)
             }
         }
         .navigationTitle("共享授权")

@@ -27,25 +27,48 @@ struct BingJianApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { model.enteredForeground() }
                 }
-                .onOpenURL { url in
-                    if url.scheme == "bingjian", url.host == "join",
-                       let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "code" })?.value {
-                        UserDefaults.standard.set(code, forKey: "pending_invite")
-                        model.notice = "邀请码已读取，请到伙伴页面加入"
-                    }
+                .onOpenURL(perform: receiveInvite)
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    if let url = activity.webpageURL { receiveInvite(url) }
                 }
         }
+    }
+
+    private func receiveInvite(_ url: URL) {
+        // 冷启动时保存的旧私服可能仍在切换中。只匹配当前地址或已配置的官方云，
+        // 不采用链接提供的地址作为登录或发送邀请码的服务器。
+        let choices = [model.serverURL, CloudDeployment.serverURL?.absoluteString ?? ""].filter { !$0.isEmpty }
+        guard let address = choices.first(where: { ChallengeInvitation.read(url, server: $0) != nil }),
+              let code = ChallengeInvitation.read(url, server: address) else {
+            if url.scheme == "bingjian", url.host == "join", choices.isEmpty,
+               let code = ChallengeInvitation.read(url, server: "") {
+                UserDefaults.standard.set("", forKey: "pending_invite_server")
+                UserDefaults.standard.set(code, forKey: "pending_invite")
+                model.notice = "邀请已保存，请先连接邀请人的服务器"
+            }
+            return
+        }
+        UserDefaults.standard.set(address, forKey: "pending_invite_server")
+        UserDefaults.standard.set(code, forKey: "pending_invite")
+        model.notice = model.session == nil || model.serverURL != address ? "邀请已保存，登录对应服务器后可查看" : "邀请已保存，请查看挑战概要"
     }
 }
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @State private var selectedTab = "today"
+    @AppStorage("pending_invite") private var pendingInvite = ""
     var body: some View {
         Group {
             if !model.hasLoadedRecords { ProgressView("正在载入记录…") }
             else if !model.setupCompleted || !model.profileSetupCompleted { OnboardingView() }
             else { MainTabs(selection: $selectedTab) }
+        }
+        .onChange(of: pendingInvite, initial: true) { _, code in
+            if !code.isEmpty { selectedTab = "community" }
+        }
+        .onChange(of: model.session?.userId) { _, user in
+            if user != nil, !pendingInvite.isEmpty { selectedTab = "community" }
         }
         .alert("操作未完成", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("知道了", role: .cancel) { model.errorMessage = nil }
@@ -64,12 +87,14 @@ struct RootView: View {
 struct MainTabs: View {
     @EnvironmentObject private var model: AppModel
     @Binding var selection: String
+    @AppStorage("pending_invite") private var invite = ""
 
     var body: some View {
         // iOS 17 的 TabView 会在重新选中时恢复系统底栏；这里仅保留自定义菜单。
         VStack(spacing: 0) {
             PersistentTabHost(selection: selection) { tab in
                 NavigationStack { page(tab) }
+                    .id(tab == "community" ? model.localDataContext.uuidString + invite : tab)
                     .environmentObject(model).environmentObject(model.health).environmentObject(model.reminders)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

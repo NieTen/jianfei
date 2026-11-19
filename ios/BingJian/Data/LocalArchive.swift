@@ -13,30 +13,24 @@ struct ArchiveContents: Sendable {
     var records: [AppRecord]
     var photos: [ArchivePhoto]
     var temporaryDirectory: URL
+    var manifest: JSONObject = [:]
 }
 
 enum LocalArchive {
     private static let magic = Data("BJAR2".utf8)
     private static let chunkSize = 64 * 1024
 
-    static func export(store: LocalDatabase, password: String, includePhotos: Bool, userId: String) async throws -> URL {
+    static func export(store: LocalDatabase, password: String, includePhotos: Bool, userId: String, includeDeleted: Bool = false,
+                       allowMissingPhotos: Bool = false) async throws -> URL {
         guard password.count >= 10 else { throw APIError(code: "ARCHIVE_PASSWORD", message: "导出密码至少需要 10 位") }
-        let records = try await store.allRecords().filter { $0.deletedAt == nil }
-        var photos: [ArchivePhoto] = []
-        if includePhotos {
-            var seen = Set<String>()
-            for record in records where record.kind == "meal" {
-                for id in record.decode(MealEntry.self)?.photoIds ?? [] where !seen.contains(id) {
-                    let url = await store.photoURL(id)
-                    guard FileManager.default.fileExists(atPath: url.path) else {
-                        throw APIError(code: "MISSING_PHOTO", message: "部分照片尚未下载，请先查看照片或选择不包含照片")
-                    }
-                    photos.append(ArchivePhoto(id: id, mealId: record.id, url: url))
-                    seen.insert(id)
-                }
-            }
-        }
-        let savedPhotos = photos
+        let snapshot = try await store.createRecoverySnapshot(at: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+                                                             includePhotos: includePhotos, includeDeleted: includeDeleted, allowMissingPhotos: allowMissingPhotos)
+        defer { try? FileManager.default.removeItem(at: snapshot.temporaryDirectory) }
+        return try await export(snapshot, password: password, includePhotos: includePhotos, userId: userId)
+    }
+
+    static func export(_ snapshot: ArchiveContents, password: String, includePhotos: Bool, userId: String) async throws -> URL {
+        guard password.count >= 10 else { throw APIError(code: "ARCHIVE_PASSWORD", message: "导出密码至少需要 10 位") }
         return try await Task.detached(priority: .userInitiated) {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -45,14 +39,18 @@ enum LocalArchive {
             try createFile(plain)
             let output = try FileHandle(forWritingTo: plain)
             do {
-                let manifest = try JSONEncoder().encode(["schema_version": JSONValue.number(1), "user_id": .string(userId),
-                    "exported_at": .string(TimeFormat.iso()), "includes_photos": .bool(includePhotos)])
+                var details = snapshot.manifest
+                details["schema_version"] = .number(1)
+                details["user_id"] = .string(userId)
+                details["exported_at"] = .string(TimeFormat.iso())
+                details["includes_photos"] = .bool(includePhotos)
+                let manifest = try JSONEncoder().encode(details)
                 try frame(output, metadata: ["type": .string("manifest"), "length": .number(Double(manifest.count))], data: manifest)
-                for record in records {
+                for record in snapshot.records {
                     let data = try Codec.encoder().encode(record)
                     try frame(output, metadata: ["type": .string("entity"), "length": .number(Double(data.count))], data: data)
                 }
-                for photo in savedPhotos {
+                for photo in includePhotos ? snapshot.photos : [] {
                     let attributes = try FileManager.default.attributesOfItem(atPath: photo.url.path)
                     let size = (attributes[.size] as? NSNumber)?.intValue ?? 0
                     try frameHeader(output, metadata: ["type": .string("photo"), "id": .string(photo.id),
@@ -88,6 +86,7 @@ enum LocalArchive {
                 var recordIds = Set<String>()
                 var photoIds = Set<String>()
                 var hasManifest = false
+                var details: JSONObject = [:]
                 while true {
                     let headerLength = Int(try uint32(readExact(input, 4)))
                     guard headerLength <= 64 * 1024 else { throw corrupt() }
@@ -103,6 +102,7 @@ enum LocalArchive {
                     case "manifest":
                         let manifest = try JSONDecoder().decode(JSONObject.self, from: data)
                         guard manifest.number("schema_version") == 1 else { throw corrupt() }
+                        details = manifest
                         hasManifest = true
                     case "entity":
                         let record = try Codec.decoder().decode(AppRecord.self, from: data)
@@ -122,7 +122,7 @@ enum LocalArchive {
                     }
                 }
                 try FileManager.default.removeItem(at: plain)
-                return ArchiveContents(records: records, photos: photos, temporaryDirectory: root)
+                return ArchiveContents(records: records, photos: photos, temporaryDirectory: root, manifest: details)
             } catch {
                 try? FileManager.default.removeItem(at: root)
                 throw APIError(code: "ARCHIVE_INVALID", message: "导入包无法解密或校验，请检查密码与文件完整性")

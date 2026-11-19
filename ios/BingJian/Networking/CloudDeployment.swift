@@ -29,3 +29,39 @@ enum CloudEntitlementLease {
         return min(300, max(0, expiry.timeIntervalSince(serverTime)))
     }
 }
+
+/// 待撤回是本机用户意图；服务端旧的 allowed=true 不得覆盖它。
+struct CloudAIRevocationStore {
+    let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+
+    static func scope(server: String, instance: String, user: String) -> String {
+        // 授权属于云账号；同账号重新关联另一份离线空间也不能丢掉尚未确认的撤回。
+        let parts = [server, instance, user]
+        let encoded = (try? JSONEncoder().encode(parts)) ?? Data()
+        return "pending_cloud_ai_revocation:" + encoded.base64EncodedString()
+    }
+
+    func pendingToken(for scope: String) -> String? { defaults.string(forKey: scope) }
+
+    @discardableResult
+    func request(for scope: String) -> String {
+        let token = UUID().uuidString
+        defaults.set(token, forKey: scope)
+        return token
+    }
+
+    func acknowledge(scope: String, token: String) {
+        // 旧请求迟到的确认不能清掉用户随后再次发出的撤回意图。
+        guard pendingToken(for: scope) == token else { return }
+        defaults.removeObject(forKey: scope)
+    }
+
+    func applyingLocalDenial(to consent: JSONObject, scope: String) -> JSONObject {
+        guard pendingToken(for: scope) != nil else { return consent }
+        var result = consent
+        result["allowed"] = .bool(false)
+        return result
+    }
+}

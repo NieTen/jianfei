@@ -22,6 +22,7 @@ class Settings:
     apns_sandbox: bool
     food_api_key: str
     deployment_mode: str = "private"
+    ios_application_id: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
@@ -32,6 +33,8 @@ class Settings:
     ai_daily_limit: int = 30
     email_code_ttl_seconds: int = 600
     cloud_allow_http: bool = False
+    backup_replica_dir: str = ""
+    backup_replica_required: bool = False
 
     @classmethod
     def from_environment(cls):
@@ -53,6 +56,7 @@ class Settings:
             apns_sandbox=os.getenv("APNS_SANDBOX", "true").lower() == "true",
             food_api_key=os.getenv("FOOD_API_KEY", ""),
             deployment_mode=os.getenv("DEPLOYMENT_MODE", "private").lower(),
+            ios_application_id=os.getenv("IOS_APPLICATION_ID", "").strip(),
             smtp_host=os.getenv("SMTP_HOST", ""),
             smtp_port=int(os.getenv("SMTP_PORT", "587")),
             smtp_username=os.getenv("SMTP_USERNAME", ""),
@@ -63,6 +67,8 @@ class Settings:
             ai_daily_limit=int(os.getenv("AI_DAILY_LIMIT", "30")),
             email_code_ttl_seconds=int(os.getenv("EMAIL_CODE_TTL_SECONDS", "600")),
             cloud_allow_http=os.getenv("CLOUD_ALLOW_HTTP", "false").lower() == "true",
+            backup_replica_dir=os.getenv("BACKUP_REPLICA_DIR", ""),
+            backup_replica_required=os.getenv("BACKUP_REPLICA_REQUIRED", "false").lower() == "true",
         )
 
     def prepare(self):
@@ -74,6 +80,18 @@ class Settings:
         cloud_http_enabled = self.cloud_allow_http and self.public_url.startswith("http://")
         if self.deployment_mode == "cloud" and not (self.public_url.startswith("https://") or cloud_http_enabled):
             raise ValueError("云端服务 PUBLIC_URL 必须使用 HTTPS；本地 HTTP 调试需设置 CLOUD_ALLOW_HTTP=true")
+        if self.backup_replica_required and not self.backup_replica_dir:
+            raise ValueError("必需异地备份时须配置 BACKUP_REPLICA_DIR")
+        if self.backup_replica_dir:
+            replica = Path(self.backup_replica_dir).resolve()
+            data = self.data_dir.resolve()
+            if replica == data or data in replica.parents or replica in data.parents:
+                raise ValueError("异地备份目录必须独立于 DATA_DIR，不能互相包含")
+            if len(self.backup_password) < 10:
+                raise ValueError("异地备份与删除账本需要至少 10 位 BACKUP_PASSWORD")
+            # 挂载点必须由运维准备；不能在远端卷掉线后悄悄创建同名本机目录。
+            if not replica.is_dir():
+                raise ValueError("异地备份目录不可用，请先挂载 BACKUP_REPLICA_DIR")
         for name in ("db", "media", "tmp", "exports", "backups", "secrets"):
             (self.data_dir / name).mkdir(parents=True, exist_ok=True)
 

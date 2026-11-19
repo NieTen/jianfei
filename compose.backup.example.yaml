@@ -1,0 +1,13 @@
+# 可选覆盖文件。先在主机挂载独立存储，再设置 BACKUP_REPLICA_HOST_DIR。
+# docker compose -f compose.yaml -f compose.backup.example.yaml config --quiet
+services:
+  api:
+    environment:
+      BACKUP_REPLICA_DIR: /backup-replica
+      BACKUP_REPLICA_REQUIRED: "${BACKUP_REPLICA_REQUIRED:-true}"
+    volumes:
+      - type: bind
+        source: "${BACKUP_REPLICA_HOST_DIR:?请设置预先挂载的独立备份目录}"
+        target: /backup-replica
+        bind:
+          create_host_path: false

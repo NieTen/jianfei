@@ -103,6 +103,100 @@ class APITests(unittest.TestCase):
         self.assertEqual(response.json()["status"], "ready")
         return image_id, meal_id, data
 
+    def test_personal_shares_scope_recipient_dates_media_and_revocation(self):
+        recipient = self.register("share_reader")
+        stranger = self.register("share_other")
+        media_id, meal_id, _ = self.upload_photo()
+        meal = {"eaten_at": self.today + "T10:00:00Z", "timezone": "UTC", "meal_type": "lunch", "status": "confirmed",
+                "note": "仅备注范围内可见", "items": [{"id": "food", "name": "苹果", "amount": 100, "unit": "g"}], "photo_ids": [media_id]}
+        self.push([self.mutation(), self.mutation("meal", meal_id, payload=meal)])
+        path = "/api/v1/shares/" + str(uuid.uuid4())
+        expires = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+        body = {"recipient": "SHARE_READER", "scopes": ["weight", "meals"], "from_day": self.today,
+                "through_day": self.today, "expires_at": expires, "expected_version": 0}
+        self.assertEqual(self.client.put(path, headers=self.headers(), json=body).status_code, 200)
+        self.assertEqual(self.client.put(path, headers=self.headers(), json=body).json()["version"], 1)
+        listing = self.client.get("/api/v1/shares", headers=self.headers(recipient), params={"direction": "received"}).json()
+        self.assertEqual([row["counterpart"] for row in listing["items"]], ["user_a"])
+        summary = path + "/summary"
+        photo = path + "/media/" + media_id
+        def read(who, day=None):
+            return self.client.get(summary, headers=self.headers(who), params={"day": day or self.today})
+        projection = read(recipient).json()
+        self.assertEqual(projection["weight_kg"], 70)
+        self.assertNotIn("diet", projection)
+        self.assertNotIn("photo_ids", projection["meals"][0])
+        self.assertNotIn("note", projection["meals"][0])
+        self.assertIsNone(projection["meals"][0]["items"][0]["nutrition"]["kcal"])
+        self.assertEqual(read(stranger).status_code, 403)
+        self.assertEqual(read(recipient, "2000-01-01").status_code, 403)
+        self.assertEqual(self.client.get(photo, headers=self.headers(recipient)).status_code, 403)
+        self.assertEqual(self.client.post(path + "/revoke", headers=self.headers(stranger), json={}).status_code, 404)
+        del body["recipient"]
+        body.update(scopes=["photos", "notes"], expected_version=1)
+        self.assertEqual(self.client.put(path, headers=self.headers(), json=body).json()["version"], 2)
+        self.assertEqual(self.client.put(path, headers=self.headers(), json=body).status_code, 409)
+        projection = read(recipient).json()
+        self.assertNotIn("weight_kg", projection)
+        self.assertNotIn("items", projection["meals"][0])
+        self.assertEqual(projection["meals"][0]["photo_ids"], [media_id])
+        self.assertEqual(projection["meals"][0]["note"], meal["note"])
+        for short in (False, True):
+            response = self.client.get(photo, headers=self.headers(recipient), params={"thumbnail": short})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(self.client.get(photo, headers=self.headers(stranger)).status_code, 403)
+        self.assertEqual(self.client.get("/api/v1/media/" + media_id, headers=self.headers(recipient)).status_code, 403)
+        self.assertEqual(self.client.delete(path, headers=self.headers(), params={"version": 1}).status_code, 409)
+        for _ in range(2):
+            self.assertEqual(self.client.post(path + "/revoke", headers=self.headers(), json={}).status_code, 200)
+        self.assertEqual(read(recipient).status_code, 403)
+        self.assertEqual(self.client.get(photo, headers=self.headers(recipient), params={"thumbnail": True}).status_code, 403)
+        body.update(expected_version=3)
+        self.assertEqual(self.client.put(path, headers=self.headers(), json=body).status_code, 403)
+
+    def test_share_expiry_and_restore_do_not_expose_later_records(self):
+        from app.cli import replay_deletions
+        recipient = self.register("expiring_reader")
+        tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+        self.push([self.mutation()])
+        identifier = str(uuid.uuid4())
+        path = "/api/v1/shares/" + identifier
+        def create(key):
+            return self.client.put(key, headers=self.headers(), json={
+                "recipient": "expiring_reader", "scopes": ["weight"], "from_day": tomorrow, "through_day": tomorrow,
+                "expires_at": (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(), "expected_version": 0})
+        self.assertEqual(create(path).status_code, 200)
+        response = self.client.get(path + "/summary", headers=self.headers(recipient), params={"day": tomorrow})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["weight_kg"])
+        with self.service.db.transaction() as repo:
+            repo.update("share_grants", {"expires_at": "2000-01-01T00:00:00+00:00"}, {"id": identifier})
+        self.assertEqual(self.client.get(path + "/summary", headers=self.headers(recipient), params={"day": tomorrow}).status_code, 403)
+        second = str(uuid.uuid4())
+        self.assertEqual(create("/api/v1/shares/" + second).status_code, 200)
+        replay_deletions(self.service, [])
+        with self.service.db.read() as repo:
+            self.assertIsNotNone(repo.one("share_grants", {"id": second})["revoked_at"])
+
+    def test_web_invite_preview_never_consumes_code(self):
+        invite = self.challenge()["invite_code"]
+        reader = self.register("invite_reader")
+        page = self.client.get("/join")
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn(invite, page.text)
+        self.assertNotIn("user_a", page.text)
+        self.assertIn("location.hash", self.client.get("/invite.js").text)
+        with patch.object(self.service, "settings", replace(self.settings, ios_application_id="ABCDE12345.com.example.test")):
+            details = self.client.get("/.well-known/apple-app-site-association").json()["applinks"]["details"]
+            self.assertEqual(details, [{"appIDs": ["ABCDE12345.com.example.test"], "components": [{"/": "/join"}]}])
+        preview = "/api/v1/challenge-invites/" + invite
+        self.assertEqual(self.client.get(preview).status_code, 401)
+        self.assertEqual(self.client.get(preview, headers=self.headers(reader)).status_code, 200)
+        result = self.client.post("/api/v1/challenges/join", headers=self.headers(reader), json={"code": invite, "goal": self.goal()})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(self.client.get(preview, headers=self.headers(reader)).status_code, 409)
+
     def test_registration_without_enrollment_keeps_authentication_required(self):
         body = {"username": "new_user", "password": "test-password-123", "display_name": "新用户",
                 "device_id": str(uuid.uuid4())}
@@ -218,6 +312,10 @@ class APITests(unittest.TestCase):
         visible = self.client.get(f"/api/v1/challenges/{challenge_id}/summary", headers=self.headers(second), params={"day": self.today}).json()
         owner = next(item for item in visible["members"] if item["user_id"] == self.user["user_id"])
         self.assertEqual(owner["weight_kg"], 70)
+        next_day = (start + timedelta(days=1)).date().isoformat()
+        no_measurement = self.client.get(f"/api/v1/challenges/{challenge_id}/summary", headers=self.headers(second),
+                                         params={"day": next_day}).json()["members"]
+        self.assertIsNone(next(row for row in no_measurement if row["user_id"] == self.user["user_id"])["weight_kg"])
         self.assertNotIn("profile", owner)
         hidden = self.client.get(f"/api/v1/challenges/{challenge_id}/summary", headers=self.headers(third), params={"day": self.today}).json()
         owner = next(item for item in hidden["members"] if item["user_id"] == self.user["user_id"])
