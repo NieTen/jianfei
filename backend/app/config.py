@@ -31,6 +31,7 @@ class Settings:
     smtp_ssl: bool = False
     ai_daily_limit: int = 30
     email_code_ttl_seconds: int = 600
+    cloud_allow_http: bool = False
 
     @classmethod
     def from_environment(cls):
@@ -61,6 +62,7 @@ class Settings:
             smtp_ssl=os.getenv("SMTP_SSL", "false").lower() == "true",
             ai_daily_limit=int(os.getenv("AI_DAILY_LIMIT", "30")),
             email_code_ttl_seconds=int(os.getenv("EMAIL_CODE_TTL_SECONDS", "600")),
+            cloud_allow_http=os.getenv("CLOUD_ALLOW_HTTP", "false").lower() == "true",
         )
 
     def prepare(self):
@@ -68,8 +70,10 @@ class Settings:
             raise ValueError("DEPLOYMENT_MODE 必须为 private 或 cloud")
         if self.ai_daily_limit < 1 or not 60 <= self.email_code_ttl_seconds <= 1800:
             raise ValueError("AI 日额度必须为正数，邮箱验证码有效期须在 60 至 1800 秒之间")
-        if self.deployment_mode == "cloud" and not self.public_url.startswith("https://"):
-            raise ValueError("云端服务 PUBLIC_URL 必须使用 HTTPS")
+        # 云模式默认要求 HTTPS，本机或可信局域网调试可显式启用 HTTP。
+        cloud_http_enabled = self.cloud_allow_http and self.public_url.startswith("http://")
+        if self.deployment_mode == "cloud" and not (self.public_url.startswith("https://") or cloud_http_enabled):
+            raise ValueError("云端服务 PUBLIC_URL 必须使用 HTTPS；本地 HTTP 调试需设置 CLOUD_ALLOW_HTTP=true")
         for name in ("db", "media", "tmp", "exports", "backups", "secrets"):
             (self.data_dir / name).mkdir(parents=True, exist_ok=True)
 
